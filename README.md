@@ -1,12 +1,23 @@
-# Minimal Template
+# Speculate - TV Show Prediction App
 
-This is a [React Native](https://reactnative.dev/) project built with [Expo](https://expo.dev/) and [React Native Reusables](https://reactnativereusables.com).
+A React Native mobile application that allows fans of mystery-driven TV shows to submit predictions, engage in episode-level discussions, and track their accuracy over time.
 
-It was initialized using the following command:
+## Features
 
-```bash
-npx react-native-reusables/cli@latest init -t speculate
-```
+- **Live Predictions**: Make predictions about upcoming episodes before they air
+- **Show Tracking**: Follow your favorite shows and get notifications
+- **Community Discussion**: Engage with other fans through threaded discussions
+- **Accuracy Tracking**: Track your prediction accuracy over time
+- **Leaderboards**: Compete with other fans for the best prediction accuracy
+
+## App Structure
+
+- **Home**: Feed of active or trending episodes
+- **My Shows**: Your followed shows & upcoming episodes
+- **Submit**: Create new predictions
+- **Profile**: View your stats and prediction history
+- **Show Details**: View show information and episodes
+- **Episode Details**: Make predictions and join discussions
 
 ## Getting Started
 

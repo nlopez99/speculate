@@ -18,7 +18,11 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={NAV_THEME[colorScheme ?? 'light']}>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      <Stack />
+      <Stack>
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="show/[id]" options={{ headerTitle: 'Show Details' }} />
+        <Stack.Screen name="episode/[id]" options={{ headerTitle: 'Episode' }} />
+      </Stack>
       <PortalHost />
     </ThemeProvider>
   );
