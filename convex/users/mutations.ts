@@ -9,10 +9,13 @@ export const updateStatsAfterPick = internalMutation({
   args: {
     userId: v.id('users'),
     predictionId: v.id('predictions'),
+    todayLocal: v.optional(v.string()), // Client's local date YYYY-MM-DD
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const today = new Date(now).toISOString().split('T')[0];
+    
+    // Use client-provided local day if available, otherwise use UTC
+    const today = args.todayLocal || new Date(now).toISOString().split('T')[0];
 
     // Get or create user stats
     let stats = await ctx.db
@@ -39,7 +42,16 @@ export const updateStatsAfterPick = internalMutation({
 
     // Update streak
     const lastActive = stats.lastActiveDay;
-    const yesterday = new Date(now - 86400000).toISOString().split('T')[0];
+    
+    // Calculate yesterday based on the current day
+    // If client provided local day, calculate yesterday from that
+    const getYesterday = (todayStr: string) => {
+      const today = new Date(todayStr + 'T00:00:00Z');
+      const yesterday = new Date(today.getTime() - 86400000);
+      return yesterday.toISOString().split('T')[0];
+    };
+    
+    const yesterday = getYesterday(today);
 
     let newStreak = stats.currentStreak;
     let bestStreak = stats.bestStreak;

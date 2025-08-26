@@ -12,7 +12,7 @@ import {
   Image,
 } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
-import { Bell, TrendingUp, Zap, Flame } from 'lucide-react-native';
+import { TrendingUp, Zap, Flame } from 'lucide-react-native';
 import { Stack, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -478,7 +478,7 @@ export default function HomeScreen() {
                               {speculation.options?.map((option) => {
                                 const selectedAnswer = selectedAnswers[speculation.id];
                                 const isSelected = selectedAnswer === option;
-                                const votes = (speculation.votingData[option] as 'Yes') || 0;
+                                const votes = speculation.votingData[option as 'Yes'] || 0;
                                 const percentage = Math.round(
                                   (votes / speculation.totalPredictions) * 100
                                 );

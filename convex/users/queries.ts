@@ -452,11 +452,12 @@ export const searchUsers = query({
     const limit = args.limit || 20;
     const searchQuery = args.query.toLowerCase();
 
-    // Search by handle (starts with)
+    // Search by handle (starts with) - use upper bound for efficiency
+    const upperBound = searchQuery + '\uffff';
     const byHandle = await ctx.db
       .query('users')
       .withIndex('handle')
-      .filter((q) => q.gte(q.field('handle'), searchQuery))
+      .filter((q) => q.gte(q.field('handle'), searchQuery) && q.lt(q.field('handle'), upperBound))
       .take(limit);
 
     // Filter to only those that actually match

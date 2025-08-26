@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { mutation } from '../_generated/server';
+import { mutation, internalMutation } from '../_generated/server';
 import { Doc, Id } from '../_generated/dataModel';
 import { internal } from '../_generated/api';
 
@@ -13,6 +13,7 @@ export const makePick = mutation({
   args: {
     predictionId: v.id('predictions'),
     optionId: v.id('predictionOptions'),
+    todayLocal: v.optional(v.string()), // Client's local date YYYY-MM-DD
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -33,7 +34,7 @@ export const makePick = mutation({
       throw new Error('Prediction has locked');
     }
 
-    // 2. Check for existing pick (idempotency)
+    // 2. Check for existing pick - enforce one pick per user per prediction
     const existingPick = await ctx.db
       .query('predictionPicks')
       .withIndex('prediction_user', (q) =>
@@ -42,7 +43,9 @@ export const makePick = mutation({
       .first();
 
     if (existingPick) {
-      throw new Error('You have already made a pick for this prediction');
+      throw new Error(
+        'You have already made a pick for this prediction. Picks cannot be changed once submitted.'
+      );
     }
 
     // 3. Validate option belongs to prediction
@@ -105,6 +108,7 @@ export const makePick = mutation({
     await ctx.scheduler.runAfter(0, internal.users.mutations.updateStatsAfterPick, {
       userId,
       predictionId: args.predictionId,
+      todayLocal: args.todayLocal,
     });
 
     return {
@@ -118,6 +122,7 @@ export const makePick = mutation({
 
 /**
  * Resolve a prediction
+ * Only admins/moderators can resolve predictions
  * - Awards points to correct pickers
  * - Updates all user stats
  * - Creates audit log
@@ -126,6 +131,7 @@ export const resolvePrediction = mutation({
   args: {
     predictionId: v.id('predictions'),
     winningOptionId: v.id('predictionOptions'),
+    resolverId: v.id('users'),
     evidence: v.optional(
       v.object({
         sourceType: v.union(
@@ -141,10 +147,7 @@ export const resolvePrediction = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('Not authenticated');
-
-    const resolverId = identity.subject as Id<'users'>;
+    const resolverId = args.resolverId;
     const now = Date.now();
 
     // 1. Get prediction
@@ -267,7 +270,7 @@ export const resolvePrediction = mutation({
 
 /**
  * Lock prediction for voting
- * Can be called by cron or manually
+ * Only admins/moderators can lock predictions unless locked by time
  */
 export const lockPrediction = mutation({
   args: {

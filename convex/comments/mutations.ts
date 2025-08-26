@@ -126,17 +126,33 @@ export const voteComment = mutation({
       }
     }
 
-    // Update comment counts
+    // Recount votes from source of truth to prevent lost updates
+    const [upvotes, downvotes] = await Promise.all([
+      ctx.db
+        .query('commentVotes')
+        .withIndex('commentId', (q) => q.eq('commentId', args.commentId))
+        .filter((q) => q.eq(q.field('value'), 1))
+        .collect()
+        .then(votes => votes.length),
+      ctx.db
+        .query('commentVotes')
+        .withIndex('commentId', (q) => q.eq('commentId', args.commentId))
+        .filter((q) => q.eq(q.field('value'), -1))
+        .collect()
+        .then(votes => votes.length),
+    ]);
+    
+    // Update comment with exact counts
     await ctx.db.patch(args.commentId, {
-      upvotes: Math.max(0, (comment.upvotes || 0) + upDelta),
-      downvotes: Math.max(0, (comment.downvotes || 0) + downDelta),
+      upvotes,
+      downvotes,
       updatedAt: now,
     });
 
     return {
       success: true,
-      newUpvotes: Math.max(0, (comment.upvotes || 0) + upDelta),
-      newDownvotes: Math.max(0, (comment.downvotes || 0) + downDelta),
+      newUpvotes: upvotes,
+      newDownvotes: downvotes,
     };
   },
 });

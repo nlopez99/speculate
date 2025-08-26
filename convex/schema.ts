@@ -588,6 +588,7 @@ export default defineSchema({
     .index('seasonId', ['seasonId'])
     .index('airDateUtc', ['airDateUtc'])
     .index('show_season_episode', ['showId', 'seasonNumber', 'episodeNumber'])
+    .index('show_airDateUtc', ['showId', 'airDateUtc']) // For upcoming episodes by show
     .index('tmdbId', ['tmdbId']),
 
   characters: defineTable(charactersValidator).index('showId', ['showId']).index('name', ['name']),
@@ -666,6 +667,7 @@ export default defineSchema({
     .index('kind', ['kind'])
     .index('periodKey', ['periodKey'])
     .index('kind_period', ['kind', 'periodKey'])
+    .index('kind_period_created', ['kind', 'periodKey', 'createdAt']) // For latest version lookup
     .index('show_season_period', ['showId', 'seasonId', 'periodKey'])
     .index('kind_period_show', ['kind', 'periodKey', 'showId']),
 
