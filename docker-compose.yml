@@ -1,0 +1,98 @@
+services:
+  # Convex Backend (local development)
+  convex-backend:
+    container_name: convex-backend
+    image: ghcr.io/get-convex/convex-backend:6efab6f2b6c182b90255774d747328cfc7b80dd9
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '3210:3210'
+      - '3211:3211'
+    volumes:
+      - convex_data:/convex/data
+    env_file:
+      - .env
+    environment:
+      - INSTANCE_NAME=${INSTANCE_NAME:-}
+      - INSTANCE_SECRET=${INSTANCE_SECRET:-}
+      - CONVEX_RELEASE_VERSION_KEY=${CONVEX_RELEASE_VERSION_KEY:-}
+      - ACTIONS_USER_TIMEOUT_SECS=${ACTIONS_USER_TIMEOUT_SECS:-}
+      - CONVEX_CLOUD_ORIGIN=
+      - CONVEX_SITE_ORIGIN=
+      - DISABLE_BEACON=true
+      - REDACT_LOGS_TO_CLIENT=false
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - speculate_network
+
+  convex-dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:6efab6f2b6c182b90255774d747328cfc7b80dd9
+    container_name: convex-dashboard
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - '${DASHBOARD_PORT:-6791}:6791'
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${NEXT_PUBLIC_DEPLOYMENT_URL:-http://127.0.0.1:${PORT:-3210}}
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+    networks:
+      - speculate_network
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: speculate-admin
+      POSTGRES_PASSWORD: speculatingAllDayLong01!
+      POSTGRES_DB: speculate
+      POSTGRES_HOST_AUTH_METHOD: md5
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U speculate-admin -d speculate']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - speculate_network
+
+  # # # Caddy (optional - for production-like HTTPS setup)
+  # caddy:
+  #   image: caddy
+  #   container_name: caddy
+  #   hostname: caddy
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   ports:
+  #     - '80:80'
+  #     - '443:443'
+  #     - '443:443/udp'
+  #   volumes:
+  #     - /etc/caddy/Caddyfile:/etc/caddy/Caddyfile
+  #     - /data/caddy/config:/caddy_config
+  #     - /data/caddy/data:/caddy_data
+  #   profiles:
+  #     - production
+  #   networks:
+  #     - speculate_network
+
+networks:
+  speculate_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  convex_data:
