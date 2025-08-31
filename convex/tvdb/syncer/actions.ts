@@ -1,7 +1,9 @@
+"use node";
+
 import { action, internalAction } from '../../_generated/server';
 import { internal } from '../../_generated/api';
 import { v } from 'convex/values';
-import { TVDBClient } from '../client/api';
+import { getAuthenticatedClient } from './client';
 import type { SyncOptions, SyncResult, TVDBEntityData, TVDBUpdateRecord } from './types';
 
 // ============================================================================
@@ -21,19 +23,8 @@ export const syncSeries = internalAction({
     ),
   },
   handler: async (ctx, args): Promise<SyncResult> => {
-    const client = new TVDBClient();
-
-    // Get API key from config
-    const apiKey = await ctx.runQuery(internal.tvdb.syncer.queries.getConfig, {
-      key: 'api_key',
-    });
-
-    if (!apiKey) {
-      throw new Error('TVDB API key not configured');
-    }
-
-    // Authenticate
-    await client.login({ apikey: apiKey as string });
+    // Get authenticated client (reuses existing token)
+    const client = await getAuthenticatedClient();
 
     try {
       // Check if we should sync (unless forced)
@@ -132,17 +123,8 @@ export const syncEpisode = internalAction({
     ),
   },
   handler: async (ctx, args): Promise<SyncResult> => {
-    const client = new TVDBClient();
-
-    const apiKey = await ctx.runQuery(internal.tvdb.syncer.queries.getConfig, {
-      key: 'api_key',
-    });
-
-    if (!apiKey) {
-      throw new Error('TVDB API key not configured');
-    }
-
-    await client.login({ apikey: apiKey as string });
+    // Get authenticated client (reuses existing token)
+    const client = await getAuthenticatedClient();
 
     try {
       // Check if we should sync
@@ -178,6 +160,36 @@ export const syncEpisode = internalAction({
         tvdbData: episodeData.data,
         tvdbId: args.episodeId,
       });
+
+      // Check if parent series needs to be synced first
+      if ((result as any).requiresParentSync && (result as any).parentSeriesId) {
+        // Queue the parent series sync with high priority
+        await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+          entityType: 'series',
+          entityId: (result as any).parentSeriesId,
+          priority: 1, // High priority
+          metadata: {
+            source: 'cascade',
+          },
+        });
+
+        // Re-queue this episode sync with lower priority
+        await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+          entityType: 'episode',
+          entityId: args.episodeId,
+          priority: 5, // Lower priority to run after series
+          metadata: {
+            source: 'cascade',
+          },
+        });
+
+        return {
+          success: true,
+          entityType: 'episode',
+          entityId: args.episodeId,
+          action: 'deferred',
+        };
+      }
 
       return {
         success: true,
@@ -219,17 +231,8 @@ export const syncSeason = internalAction({
     ),
   },
   handler: async (ctx, args): Promise<SyncResult> => {
-    const client = new TVDBClient();
-
-    const apiKey = await ctx.runQuery(internal.tvdb.syncer.queries.getConfig, {
-      key: 'api_key',
-    });
-
-    if (!apiKey) {
-      throw new Error('TVDB API key not configured');
-    }
-
-    await client.login({ apikey: apiKey as string });
+    // Get authenticated client (reuses existing token)
+    const client = await getAuthenticatedClient();
 
     try {
       // Fetch season data
@@ -305,53 +308,61 @@ export const syncUpdates = internalAction({
     entityType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const client = new TVDBClient();
-
-    const apiKey = await ctx.runQuery(internal.tvdb.syncer.queries.getConfig, {
-      key: 'api_key',
-    });
-
-    if (!apiKey) {
-      throw new Error('TVDB API key not configured');
-    }
-
-    await client.login({ apikey: apiKey as string });
-
-    // Get updates from TVDB
-    const updates = await client.getUpdates({
-      since: args.since,
-      type: args.entityType,
-      action: 'update',
-    });
+    // Get authenticated client (reuses existing token)
+    const client = await getAuthenticatedClient();
 
     const results = [];
+    let currentPage = 0;
+    let hasMore = true;
+    const sinceSec = Math.floor(args.since / 1000); // Convert ms to seconds
 
-    // Queue all updates
-    for (const update of updates.data) {
-      if (update.entityType && update.recordId) {
-        const entityType = mapTVDBEntityType(update.entityType);
-        if (entityType) {
-          await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-            entityType,
-            entityId: update.recordId.toString(),
-            priority: 3, // Medium priority for updates
-            metadata: {
-              source: 'webhook',
-            },
-          });
+    // Process all pages of updates
+    while (hasMore) {
+      // Get updates from TVDB (TVDB expects UNIX seconds)
+      const updates = await client.getUpdates({
+        since: sinceSec,
+        type: args.entityType,
+        action: 'update',
+        page: currentPage,
+      });
 
-          results.push({
-            entityType,
-            entityId: update.recordId.toString(),
-            queued: true,
-          });
+      // Queue all updates from this page
+      for (const update of updates.data) {
+        if (update.entityType && update.recordId) {
+          const entityType = mapTVDBEntityType(update.entityType);
+          if (entityType) {
+            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+              entityType,
+              entityId: update.recordId.toString(),
+              priority: 3, // Medium priority for updates
+              metadata: {
+                source: 'webhook',
+              },
+            });
+
+            results.push({
+              entityType,
+              entityId: update.recordId.toString(),
+              queued: true,
+            });
+          }
         }
+      }
+
+      // Check if there are more pages
+      const next = updates.links?.next;
+      hasMore = !!(next && next !== '');
+      
+      if (hasMore) {
+        currentPage = parseInt(next!, 10);
+        // Small delay between pages to avoid hammering the API
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
 
-    // Update last sync time
+    // Update last incremental sync time (not full sync)
     await ctx.runMutation(internal.tvdb.syncer.mutations.updateConfig, {
-      key: 'last_full_sync',
+      key: 'last_incremental_sync',
       value: Date.now(),
     });
 

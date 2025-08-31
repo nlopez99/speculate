@@ -636,6 +636,7 @@ export interface Links {
   prev?: string | null;
   self?: string | null;
   next?: string;
+  last?: number;
   total_items?: number;
   page_size?: number;
 }
@@ -731,10 +732,11 @@ export class TVDBClient {
    */
   setToken(token: string): void {
     this.token = token;
-    this.client.defaults.headers = {
-      ...this.client.defaults.headers,
-      Authorization: `Bearer ${token}`,
-    };
+    // Safely set the Authorization header without overwriting other headers
+    if (!this.client.defaults.headers) {
+      this.client.defaults.headers = {};
+    }
+    (this.client.defaults.headers as any).Authorization = `Bearer ${token}`;
   }
 
   /**
@@ -816,7 +818,7 @@ export class TVDBClient {
 
   async getAllCompanies(page?: number): Promise<PaginatedResponse<Company>> {
     const response = await this.client.get<PaginatedResponse<Company>>('/companies', {
-      params: page ? { page } : undefined,
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -864,7 +866,7 @@ export class TVDBClient {
 
   async getAllEpisodes(page?: number): Promise<PaginatedResponse<EpisodeBaseRecord>> {
     const response = await this.client.get<PaginatedResponse<EpisodeBaseRecord>>('/episodes', {
-      params: page ? { page } : undefined,
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -933,7 +935,7 @@ export class TVDBClient {
 
   async getAllLists(page?: number): Promise<PaginatedResponse<ListBaseRecord>> {
     const response = await this.client.get<PaginatedResponse<ListBaseRecord>>('/lists', {
-      params: page ? { page } : undefined,
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -964,7 +966,7 @@ export class TVDBClient {
 
   async getAllMovies(page?: number): Promise<PaginatedResponse<MovieBaseRecord>> {
     const response = await this.client.get<PaginatedResponse<MovieBaseRecord>>('/movies', {
-      params: page ? { page } : undefined,
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -1010,7 +1012,7 @@ export class TVDBClient {
 
   async getAllPeople(page?: number): Promise<PaginatedResponse<PeopleBaseRecord>> {
     const response = await this.client.get<PaginatedResponse<PeopleBaseRecord>>('/people', {
-      params: page ? { page } : undefined,
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -1055,9 +1057,9 @@ export class TVDBClient {
   // Season Endpoints
   // ============================================================================
 
-  async getAllSeasons(page?: number): Promise<ApiResponse<SeasonBaseRecord[]>> {
-    const response = await this.client.get<ApiResponse<SeasonBaseRecord[]>>('/seasons', {
-      params: page ? { page } : undefined,
+  async getAllSeasons(page?: number): Promise<PaginatedResponse<SeasonBaseRecord>> {
+    const response = await this.client.get<PaginatedResponse<SeasonBaseRecord>>('/seasons', {
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -1088,7 +1090,7 @@ export class TVDBClient {
 
   async getAllSeries(page?: number): Promise<PaginatedResponse<SeriesBaseRecord>> {
     const response = await this.client.get<PaginatedResponse<SeriesBaseRecord>>('/series', {
-      params: page ? { page } : undefined,
+      params: typeof page === 'number' ? { page } : undefined,
     });
     return response.data;
   }
@@ -1140,8 +1142,8 @@ export class TVDBClient {
     seasonType: SeasonTypeEnum,
     lang: string,
     page: number
-  ): Promise<ApiResponse<{ series: SeriesBaseRecord }>> {
-    const response = await this.client.get<ApiResponse<{ series: SeriesBaseRecord }>>(
+  ): Promise<ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>> {
+    const response = await this.client.get<ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>>(
       `/series/${id}/episodes/${seasonType}/${lang}`,
       { params: { page } }
     );

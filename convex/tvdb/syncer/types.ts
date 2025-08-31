@@ -31,7 +31,7 @@ export interface SyncResult {
   success: boolean;
   entityType: 'series' | 'season' | 'episode' | 'movie' | 'person' | 'company';
   entityId: string;
-  action: 'created' | 'updated' | 'skipped' | 'failed';
+  action: 'created' | 'updated' | 'skipped' | 'failed' | 'deferred';
   changes?: SyncChanges;
   error?: string;
   relatedSyncs?: SyncResult[];

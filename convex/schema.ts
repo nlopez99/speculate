@@ -1,12 +1,12 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { authTables } from '@convex-dev/auth/server';
 import { Infer, v } from 'convex/values';
-import { 
+import {
   tvdbSyncStateValidator,
   tvdbIdMappingValidator,
   tvdbSyncLogValidator,
   tvdbRawDataValidator,
-  tvdbSyncConfigValidator
+  tvdbSyncConfigValidator,
 } from './tvdb/syncer/schema';
 
 /* =====================
@@ -776,6 +776,5 @@ export default defineSchema({
     .index('tvdbId', ['tvdbId'])
     .index('expiresAt', ['expiresAt']),
 
-  tvdbSyncConfig: defineTable(tvdbSyncConfigValidator)
-    .index('key', ['key']),
+  tvdbSyncConfig: defineTable(tvdbSyncConfigValidator).index('key', ['key']),
 });

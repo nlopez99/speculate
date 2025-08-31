@@ -90,15 +90,28 @@ export const upsertSeries = internalMutation({
       });
     }
 
-    // Update sync state
-    await ctx.db.insert('tvdbSyncState', {
-      entityType: 'series',
+    // Update sync state (upsert)
+    const existingState = await ctx.db
+      .query('tvdbSyncState')
+      .withIndex('entityType_entityId', (q) =>
+        q.eq('entityType', 'series').eq('entityId', args.tvdbId)
+      )
+      .first();
+
+    const syncStateData = {
+      entityType: 'series' as const,
       entityId: args.tvdbId,
       lastSyncedAt: now,
       lastModifiedAt: data.lastUpdated ? new Date(data.lastUpdated).getTime() : undefined,
-      version: 1,
-      status: 'synced',
-    });
+      version: (existingState?.version ?? 0) + 1,
+      status: 'synced' as const,
+    };
+
+    if (existingState) {
+      await ctx.db.patch(existingState._id, syncStateData);
+    } else {
+      await ctx.db.insert('tvdbSyncState', syncStateData);
+    }
 
     return { created, showId, changes };
   },
@@ -122,11 +135,23 @@ export const upsertEpisode = internalMutation({
       .first();
 
     if (!seriesMapping?.convexId) {
-      throw new Error(`Series ${data.seriesId} not synced yet`);
+      // Series not synced yet - return a special result to trigger parent sync
+      return {
+        created: false,
+        episodeId: undefined,
+        changes: {
+          added: [],
+          modified: [],
+          removed: [],
+          details: {},
+        },
+        requiresParentSync: true,
+        parentSeriesId: data.seriesId?.toString(),
+      };
     }
 
-    // Get season
-    const season = await ctx.db
+    // Get or create season
+    let season = await ctx.db
       .query('seasons')
       .withIndex('show_seasonNumber', (q) =>
         q
@@ -136,7 +161,23 @@ export const upsertEpisode = internalMutation({
       .first();
 
     if (!season) {
-      throw new Error(`Season ${data.seasonNumber} not found for series ${data.seriesId}`);
+      // Season not found - create a minimal season stub
+      const seasonId = await ctx.db.insert('seasons', {
+        showId: seriesMapping.convexId as Id<'shows'>,
+        seasonNumber: data.seasonNumber || 0,
+        title: `Season ${data.seasonNumber || 0}`,
+        tvdbId: undefined, // Episode data doesn't include seasonId
+        episodeCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Fetch the newly created season to ensure we have the full record
+      const newSeason = await ctx.db.get(seasonId);
+      if (!newSeason) {
+        throw new Error('Failed to create season stub');
+      }
+      season = newSeason;
     }
 
     // Check if episode exists
@@ -166,7 +207,12 @@ export const upsertEpisode = internalMutation({
       episodeNumber: data.number || 0,
       title: data.name || `Episode ${data.number}`,
       overview: data.translations?.overviewTranslations?.[0]?.overview,
-      airDateUtc: data.aired ? new Date(data.aired).getTime() : undefined,
+      // Parse date-only strings as UTC midnight to avoid timezone drift
+      airDateUtc: data.aired
+        ? new Date(
+            /^\d{4}-\d{2}-\d{2}$/.test(data.aired) ? `${data.aired}T00:00:00Z` : data.aired
+          ).getTime()
+        : undefined,
       runtimeMinutes: data.runtime || undefined, // Convert null to undefined
       tvdbId: args.tvdbId,
       imdbId: data.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
@@ -202,15 +248,28 @@ export const upsertEpisode = internalMutation({
       changes.added.push('episode');
     }
 
-    // Update sync state
-    await ctx.db.insert('tvdbSyncState', {
-      entityType: 'episode',
+    // Update sync state (upsert)
+    const existingState = await ctx.db
+      .query('tvdbSyncState')
+      .withIndex('entityType_entityId', (q) =>
+        q.eq('entityType', 'episode').eq('entityId', args.tvdbId)
+      )
+      .first();
+
+    const syncStateData = {
+      entityType: 'episode' as const,
       entityId: args.tvdbId,
       lastSyncedAt: now,
       lastModifiedAt: data.lastUpdated ? new Date(data.lastUpdated).getTime() : undefined,
-      version: 1,
-      status: 'synced',
-    });
+      version: (existingState?.version ?? 0) + 1,
+      status: 'synced' as const,
+    };
+
+    if (existingState) {
+      await ctx.db.patch(existingState._id, syncStateData);
+    } else {
+      await ctx.db.insert('tvdbSyncState', syncStateData);
+    }
 
     return { created, episodeId, changes };
   },
@@ -278,15 +337,28 @@ export const upsertSeason = internalMutation({
       changes.added.push('season');
     }
 
-    // Update sync state
-    await ctx.db.insert('tvdbSyncState', {
-      entityType: 'season',
+    // Update sync state (upsert)
+    const existingState = await ctx.db
+      .query('tvdbSyncState')
+      .withIndex('entityType_entityId', (q) =>
+        q.eq('entityType', 'season').eq('entityId', args.tvdbId)
+      )
+      .first();
+
+    const syncStateData = {
+      entityType: 'season' as const,
       entityId: args.tvdbId,
       lastSyncedAt: now,
       lastModifiedAt: data.lastUpdated ? new Date(data.lastUpdated).getTime() : undefined,
-      version: 1,
-      status: 'synced',
-    });
+      version: (existingState?.version ?? 0) + 1,
+      status: 'synced' as const,
+    };
+
+    if (existingState) {
+      await ctx.db.patch(existingState._id, syncStateData);
+    } else {
+      await ctx.db.insert('tvdbSyncState', syncStateData);
+    }
 
     return { created, seasonId, changes };
   },
@@ -304,7 +376,14 @@ export const upsertSeason = internalMutation({
 
 export const updateSyncState = internalMutation({
   args: {
-    entityType: v.string(),
+    entityType: v.union(
+      v.literal('series'),
+      v.literal('season'),
+      v.literal('episode'),
+      v.literal('movie'),
+      v.literal('person'),
+      v.literal('company')
+    ),
     entityId: v.string(),
     status: v.union(
       v.literal('synced'),
@@ -318,12 +397,23 @@ export const updateSyncState = internalMutation({
     const existing = await ctx.db
       .query('tvdbSyncState')
       .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', args.entityType as "series" | "season" | "episode" | "movie" | "person" | "company").eq('entityId', args.entityId)
+        q
+          .eq(
+            'entityType',
+            args.entityType as 'series' | 'season' | 'episode' | 'movie' | 'person' | 'company'
+          )
+          .eq('entityId', args.entityId)
       )
       .first();
 
     const data = {
-      entityType: args.entityType as "series" | "season" | "episode" | "movie" | "person" | "company",
+      entityType: args.entityType as
+        | 'series'
+        | 'season'
+        | 'episode'
+        | 'movie'
+        | 'person'
+        | 'company',
       entityId: args.entityId,
       lastSyncedAt: Date.now(),
       status: args.status,
@@ -376,6 +466,7 @@ export const updateConfig = internalMutation({
       v.literal('rate_limit_window_ms'),
       v.literal('sync_enabled'),
       v.literal('last_full_sync'),
+      v.literal('last_incremental_sync'),
       v.literal('sync_interval_hours'),
       v.literal('max_retries'),
       v.literal('batch_size')
@@ -422,6 +513,103 @@ export const cleanupOldRawData = internalMutation({
     }
 
     return { deleted };
+  },
+});
+
+// ============================================================================
+// Sync Logging Mutations
+// ============================================================================
+
+export const logSyncStart = internalMutation({
+  args: {
+    syncId: v.string(),
+    entityType: v.string(),
+    metadata: v.optional(
+      v.object({
+        startPage: v.optional(v.number()),
+        batchSize: v.optional(v.number()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert('tvdbSyncLog', {
+      syncId: args.syncId,
+      entityType: args.entityType,
+      entityId: 'all',
+      action: 'start',
+      status: 'started',
+      startedAt: Date.now(),
+      metadata: args.metadata,
+    });
+  },
+});
+
+export const logSyncProgress = internalMutation({
+  args: {
+    syncId: v.string(),
+    message: v.string(),
+    metadata: v.optional(
+      v.object({
+        page: v.optional(v.number()),
+        processed: v.optional(v.number()),
+        skipped: v.optional(v.number()),
+        currentSeriesId: v.optional(v.string()),
+        currentSeriesName: v.optional(v.string()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert('tvdbSyncLog', {
+      syncId: args.syncId,
+      entityType: 'progress',
+      entityId: args.metadata?.currentSeriesId || 'batch',
+      action: 'progress',
+      status: 'started',
+      startedAt: Date.now(),
+      metadata: args.metadata,
+    });
+  },
+});
+
+export const logSyncComplete = internalMutation({
+  args: {
+    syncId: v.string(),
+    metadata: v.optional(
+      v.object({
+        totalPages: v.optional(v.number()),
+        totalSeries: v.optional(v.number()),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert('tvdbSyncLog', {
+      syncId: args.syncId,
+      entityType: 'full_database',
+      entityId: 'all',
+      action: 'complete',
+      status: 'completed',
+      startedAt: Date.now(),
+      completedAt: Date.now(),
+      metadata: args.metadata,
+    });
+  },
+});
+
+export const logSyncError = internalMutation({
+  args: {
+    syncId: v.string(),
+    error: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert('tvdbSyncLog', {
+      syncId: args.syncId,
+      entityType: 'error',
+      entityId: 'error',
+      action: 'error',
+      status: 'failed',
+      startedAt: Date.now(),
+      error: args.error,
+    });
   },
 });
 

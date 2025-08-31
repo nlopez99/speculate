@@ -77,11 +77,7 @@ export const tvdbSyncLogValidator = v.object({
     }))),
   })),
   error: v.optional(v.string()),
-  metadata: v.optional(v.object({
-    recordsProcessed: v.optional(v.number()),
-    apiCalls: v.optional(v.number()),
-    cacheHits: v.optional(v.number()),
-  })),
+  metadata: v.optional(v.any()), // Allow any metadata structure
 });
 
 export const tvdbRawDataValidator = v.object({
@@ -101,6 +97,7 @@ export const tvdbSyncConfigValidator = v.object({
     v.literal('rate_limit_window_ms'),
     v.literal('sync_enabled'),
     v.literal('last_full_sync'),
+    v.literal('last_incremental_sync'),
     v.literal('sync_interval_hours'),
     v.literal('max_retries'),
     v.literal('batch_size')

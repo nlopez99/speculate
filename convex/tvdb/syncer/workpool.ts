@@ -13,9 +13,10 @@ export const tvdbSyncPool = new Workpool(components.tvdbSyncPool, {
   retryActionsByDefault: true,
   defaultRetryBehavior: {
     maxAttempts: 3,
-    initialBackoffMs: 1000,
+    initialBackoffMs: 3000,
     base: 2, // Exponential backoff
   },
+  logLevel: 'INFO' as const,
 });
 
 // Queue a sync operation for a TVDB entity
@@ -53,8 +54,9 @@ export const enqueueSyncEntity = internalMutation({
     // Enqueue based on entity type
     let workId: WorkId;
     const options = {
-      // Use priority to schedule execution
-      runAfter: args.priority ? args.priority * 100 : 0, // Convert priority to milliseconds
+      // Use priority to schedule execution (lower priority = run sooner)
+      // Priority 1 = high (immediate), 5 = medium (500ms), 10 = low (1000ms)
+      runAfter: args.priority ? (args.priority - 1) * 100 : 0,
       // Retry configuration (uses defaults if not specified)
       retry: true,
       // Store context for monitoring/debugging
@@ -158,18 +160,8 @@ export const handleSyncComplete = tvdbSyncPool.defineOnComplete({
 
     await ctx.db.insert('tvdbSyncLog', syncLog);
 
-    // If this was a series sync and it succeeded, queue child entities
-    if (result.kind === 'success' && context.entityType === 'series' && !context.metadata?.source) {
-      const syncResult = result.returnValue;
-
-      // Queue related syncs if they were returned
-      if (syncResult?.relatedSyncs?.length > 0) {
-        // Related syncs are already queued by the action itself
-        console.log(
-          `Queued ${syncResult.relatedSyncs.length} related syncs for series ${context.entityId}`
-        );
-      }
-    }
+    // Note: Child entities (seasons/episodes) are already queued by the sync actions themselves
+    // No additional queuing logic needed here
   },
 });
 
