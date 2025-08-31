@@ -1,6 +1,13 @@
 import { defineSchema, defineTable } from 'convex/server';
 import { authTables } from '@convex-dev/auth/server';
 import { Infer, v } from 'convex/values';
+import { 
+  tvdbSyncStateValidator,
+  tvdbIdMappingValidator,
+  tvdbSyncLogValidator,
+  tvdbRawDataValidator,
+  tvdbSyncConfigValidator
+} from './tvdb/syncer/schema';
 
 /* =====================
  * USERS & PROFILES
@@ -75,6 +82,7 @@ const seasonsValidator = v.object({
   seasonNumber: v.number(),
   title: v.optional(v.string()),
   tmdbId: v.optional(v.string()),
+  tvdbId: v.optional(v.string()),
   posterUrl: v.optional(v.string()),
   episodeCount: v.optional(v.number()),
   createdAt: v.number(),
@@ -91,6 +99,7 @@ const episodesValidator = v.object({
   airDateUtc: v.optional(v.number()), // ms since epoch
   runtimeMinutes: v.optional(v.number()),
   tmdbId: v.optional(v.string()),
+  tvdbId: v.optional(v.string()),
   imdbId: v.optional(v.string()),
   stillUrl: v.optional(v.string()),
   // Convenience flags
@@ -747,4 +756,26 @@ export default defineSchema({
   ]),
 
   episodeStats: defineTable(episodeStatsValidator).index('episodeId', ['episodeId']),
+
+  // TVDB Sync Tables
+  tvdbSyncState: defineTable(tvdbSyncStateValidator)
+    .index('entityType_entityId', ['entityType', 'entityId'])
+    .index('status', ['status']),
+
+  tvdbIdMapping: defineTable(tvdbIdMappingValidator)
+    .index('tvdbId_type', ['tvdbId', 'tvdbType'])
+    .index('convexId', ['convexId'])
+    .index('slug', ['slug']),
+
+  tvdbSyncLog: defineTable(tvdbSyncLogValidator)
+    .index('syncId', ['syncId'])
+    .index('entityType_entityId', ['entityType', 'entityId'])
+    .index('status', ['status']),
+
+  tvdbRawData: defineTable(tvdbRawDataValidator)
+    .index('tvdbId', ['tvdbId'])
+    .index('expiresAt', ['expiresAt']),
+
+  tvdbSyncConfig: defineTable(tvdbSyncConfigValidator)
+    .index('key', ['key']),
 });
