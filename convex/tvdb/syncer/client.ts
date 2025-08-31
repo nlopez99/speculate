@@ -1,5 +1,3 @@
-"use node";
-
 import { TVDBClient } from '../client/api';
 
 // Singleton instance management
@@ -14,35 +12,26 @@ const TOKEN_LIFETIME_MS = 23 * 60 * 60 * 1000; // 23 hours (tokens typically las
  */
 export async function getAuthenticatedClient(): Promise<TVDBClient> {
   const apiKey = process.env.TVDB_API_KEY;
-  
+
   if (!apiKey) {
     throw new Error('TVDB_API_KEY environment variable not set');
   }
 
   const now = Date.now();
-  
-  // Check if we need to create a new client or re-authenticate
-  const needsNewAuth = !clientInstance || 
-                       !lastLoginTime || 
-                       (now - lastLoginTime) > TOKEN_LIFETIME_MS;
-  
-  if (needsNewAuth) {
-    // Create new client instance if needed
-    if (!clientInstance) {
-      clientInstance = new TVDBClient('https://api4.thetvdb.com/v4');
-    }
-    
-    // Authenticate with API key
-    await clientInstance.login({ apikey: apiKey });
-    lastLoginTime = now;
-    
-    console.log(`[TVDB] Authenticated new session at ${new Date(now).toISOString()}`);
-  }
-  
+
+  // Create new client instance if needed
+  clientInstance ??= new TVDBClient('https://api4.thetvdb.com/v4');
+
+  // Authenticate with API key
+  await clientInstance.login({ apikey: apiKey });
+  lastLoginTime = now;
+
+  console.log(`[TVDB] Authenticated new session at ${new Date(now).toISOString()}`);
+
   if (!clientInstance) {
     throw new Error('Failed to initialize TVDB client');
   }
-  
+
   return clientInstance;
 }
 

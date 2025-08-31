@@ -732,11 +732,10 @@ export class TVDBClient {
    */
   setToken(token: string): void {
     this.token = token;
-    // Safely set the Authorization header without overwriting other headers
-    if (!this.client.defaults.headers) {
-      this.client.defaults.headers = {};
-    }
-    (this.client.defaults.headers as any).Authorization = `Bearer ${token}`;
+    this.client.defaults.headers = {
+      ...this.client.defaults.headers,
+      Authorization: `Bearer ${token}`,
+    };
   }
 
   /**
@@ -760,7 +759,9 @@ export class TVDBClient {
   }
 
   async getArtworkExtended(id: number): Promise<ApiResponse<ArtworkExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<ArtworkExtendedRecord>>(`/artwork/${id}/extended`);
+    const response = await this.client.get<ApiResponse<ArtworkExtendedRecord>>(
+      `/artwork/${id}/extended`
+    );
     return response.data;
   }
 
@@ -789,17 +790,23 @@ export class TVDBClient {
   }
 
   async getAwardExtended(id: number): Promise<ApiResponse<AwardExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<AwardExtendedRecord>>(`/awards/${id}/extended`);
+    const response = await this.client.get<ApiResponse<AwardExtendedRecord>>(
+      `/awards/${id}/extended`
+    );
     return response.data;
   }
 
   async getAwardCategory(id: number): Promise<ApiResponse<AwardCategoryBaseRecord>> {
-    const response = await this.client.get<ApiResponse<AwardCategoryBaseRecord>>(`/awards/categories/${id}`);
+    const response = await this.client.get<ApiResponse<AwardCategoryBaseRecord>>(
+      `/awards/categories/${id}`
+    );
     return response.data;
   }
 
   async getAwardCategoryExtended(id: number): Promise<ApiResponse<AwardCategoryExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<AwardCategoryExtendedRecord>>(`/awards/categories/${id}/extended`);
+    const response = await this.client.get<ApiResponse<AwardCategoryExtendedRecord>>(
+      `/awards/categories/${id}/extended`
+    );
     return response.data;
   }
 
@@ -876,15 +883,23 @@ export class TVDBClient {
     return response.data;
   }
 
-  async getEpisodeExtended(id: number, meta?: 'translations'): Promise<ApiResponse<EpisodeExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<EpisodeExtendedRecord>>(`/episodes/${id}/extended`, {
-      params: meta ? { meta } : undefined,
-    });
+  async getEpisodeExtended(
+    id: number,
+    meta?: 'translations'
+  ): Promise<ApiResponse<EpisodeExtendedRecord>> {
+    const response = await this.client.get<ApiResponse<EpisodeExtendedRecord>>(
+      `/episodes/${id}/extended`,
+      {
+        params: meta ? { meta } : undefined,
+      }
+    );
     return response.data;
   }
 
   async getEpisodeTranslation(id: number, language: string): Promise<ApiResponse<Translation>> {
-    const response = await this.client.get<ApiResponse<Translation>>(`/episodes/${id}/translations/${language}`);
+    const response = await this.client.get<ApiResponse<Translation>>(
+      `/episodes/${id}/translations/${language}`
+    );
     return response.data;
   }
 
@@ -951,12 +966,16 @@ export class TVDBClient {
   }
 
   async getListExtended(id: number): Promise<ApiResponse<ListExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<ListExtendedRecord>>(`/lists/${id}/extended`);
+    const response = await this.client.get<ApiResponse<ListExtendedRecord>>(
+      `/lists/${id}/extended`
+    );
     return response.data;
   }
 
   async getListTranslation(id: number, language: string): Promise<ApiResponse<Translation[]>> {
-    const response = await this.client.get<ApiResponse<Translation[]>>(`/lists/${id}/translations/${language}`);
+    const response = await this.client.get<ApiResponse<Translation[]>>(
+      `/lists/${id}/translations/${language}`
+    );
     return response.data;
   }
 
@@ -980,14 +999,19 @@ export class TVDBClient {
     id: number,
     options?: { meta?: 'translations'; short?: boolean }
   ): Promise<ApiResponse<MovieExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<MovieExtendedRecord>>(`/movies/${id}/extended`, {
-      params: options,
-    });
+    const response = await this.client.get<ApiResponse<MovieExtendedRecord>>(
+      `/movies/${id}/extended`,
+      {
+        params: options,
+      }
+    );
     return response.data;
   }
 
   async getMoviesFilter(params: MoviesFilterParams): Promise<ApiResponse<MovieBaseRecord[]>> {
-    const response = await this.client.get<ApiResponse<MovieBaseRecord[]>>('/movies/filter', { params });
+    const response = await this.client.get<ApiResponse<MovieBaseRecord[]>>('/movies/filter', {
+      params,
+    });
     return response.data;
   }
 
@@ -997,7 +1021,9 @@ export class TVDBClient {
   }
 
   async getMovieTranslation(id: number, language: string): Promise<ApiResponse<Translation>> {
-    const response = await this.client.get<ApiResponse<Translation>>(`/movies/${id}/translations/${language}`);
+    const response = await this.client.get<ApiResponse<Translation>>(
+      `/movies/${id}/translations/${language}`
+    );
     return response.data;
   }
 
@@ -1022,15 +1048,23 @@ export class TVDBClient {
     return response.data;
   }
 
-  async getPeopleExtended(id: number, meta?: 'translations'): Promise<ApiResponse<PeopleExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<PeopleExtendedRecord>>(`/people/${id}/extended`, {
-      params: meta ? { meta } : undefined,
-    });
+  async getPeopleExtended(
+    id: number,
+    meta?: 'translations'
+  ): Promise<ApiResponse<PeopleExtendedRecord>> {
+    const response = await this.client.get<ApiResponse<PeopleExtendedRecord>>(
+      `/people/${id}/extended`,
+      {
+        params: meta ? { meta } : undefined,
+      }
+    );
     return response.data;
   }
 
   async getPeopleTranslation(id: number, language: string): Promise<ApiResponse<Translation>> {
-    const response = await this.client.get<ApiResponse<Translation>>(`/people/${id}/translations/${language}`);
+    const response = await this.client.get<ApiResponse<Translation>>(
+      `/people/${id}/translations/${language}`
+    );
     return response.data;
   }
 
@@ -1049,7 +1083,9 @@ export class TVDBClient {
   }
 
   async searchByRemoteId(remoteId: string): Promise<ApiResponse<SearchByRemoteIdResult[]>> {
-    const response = await this.client.get<ApiResponse<SearchByRemoteIdResult[]>>(`/search/remoteid/${remoteId}`);
+    const response = await this.client.get<ApiResponse<SearchByRemoteIdResult[]>>(
+      `/search/remoteid/${remoteId}`
+    );
     return response.data;
   }
 
@@ -1070,7 +1106,9 @@ export class TVDBClient {
   }
 
   async getSeasonExtended(id: number): Promise<ApiResponse<SeasonExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<SeasonExtendedRecord>>(`/seasons/${id}/extended`);
+    const response = await this.client.get<ApiResponse<SeasonExtendedRecord>>(
+      `/seasons/${id}/extended`
+    );
     return response.data;
   }
 
@@ -1080,7 +1118,9 @@ export class TVDBClient {
   }
 
   async getSeasonTranslation(id: number, language: string): Promise<ApiResponse<Translation>> {
-    const response = await this.client.get<ApiResponse<Translation>>(`/seasons/${id}/translations/${language}`);
+    const response = await this.client.get<ApiResponse<Translation>>(
+      `/seasons/${id}/translations/${language}`
+    );
     return response.data;
   }
 
@@ -1104,14 +1144,19 @@ export class TVDBClient {
     id: number,
     options?: { lang?: string; type?: number }
   ): Promise<ApiResponse<SeriesExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<SeriesExtendedRecord>>(`/series/${id}/artworks`, {
-      params: options,
-    });
+    const response = await this.client.get<ApiResponse<SeriesExtendedRecord>>(
+      `/series/${id}/artworks`,
+      {
+        params: options,
+      }
+    );
     return response.data;
   }
 
   async getSeriesNextAired(id: number): Promise<ApiResponse<SeriesBaseRecord>> {
-    const response = await this.client.get<ApiResponse<SeriesBaseRecord>>(`/series/${id}/nextAired`);
+    const response = await this.client.get<ApiResponse<SeriesBaseRecord>>(
+      `/series/${id}/nextAired`
+    );
     return response.data;
   }
 
@@ -1119,9 +1164,12 @@ export class TVDBClient {
     id: number,
     options?: { meta?: MetaType; short?: boolean }
   ): Promise<ApiResponse<SeriesExtendedRecord>> {
-    const response = await this.client.get<ApiResponse<SeriesExtendedRecord>>(`/series/${id}/extended`, {
-      params: options,
-    });
+    const response = await this.client.get<ApiResponse<SeriesExtendedRecord>>(
+      `/series/${id}/extended`,
+      {
+        params: options,
+      }
+    );
     return response.data;
   }
 
@@ -1130,10 +1178,9 @@ export class TVDBClient {
     seasonType: SeasonTypeEnum,
     params?: SeriesEpisodesParams
   ): Promise<ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>> {
-    const response = await this.client.get<ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>>(
-      `/series/${id}/episodes/${seasonType}`,
-      { params }
-    );
+    const response = await this.client.get<
+      ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>
+    >(`/series/${id}/episodes/${seasonType}`, { params });
     return response.data;
   }
 
@@ -1143,15 +1190,16 @@ export class TVDBClient {
     lang: string,
     page: number
   ): Promise<ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>> {
-    const response = await this.client.get<ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>>(
-      `/series/${id}/episodes/${seasonType}/${lang}`,
-      { params: { page } }
-    );
+    const response = await this.client.get<
+      ApiResponse<{ series: SeriesBaseRecord; episodes: EpisodeBaseRecord[] }>
+    >(`/series/${id}/episodes/${seasonType}/${lang}`, { params: { page } });
     return response.data;
   }
 
   async getSeriesFilter(params: SeriesFilterParams): Promise<ApiResponse<SeriesBaseRecord[]>> {
-    const response = await this.client.get<ApiResponse<SeriesBaseRecord[]>>('/series/filter', { params });
+    const response = await this.client.get<ApiResponse<SeriesBaseRecord[]>>('/series/filter', {
+      params,
+    });
     return response.data;
   }
 
@@ -1161,7 +1209,9 @@ export class TVDBClient {
   }
 
   async getSeriesTranslation(id: number, language: string): Promise<ApiResponse<Translation>> {
-    const response = await this.client.get<ApiResponse<Translation>>(`/series/${id}/translations/${language}`);
+    const response = await this.client.get<ApiResponse<Translation>>(
+      `/series/${id}/translations/${language}`
+    );
     return response.data;
   }
 
