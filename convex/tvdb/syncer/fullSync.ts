@@ -1,4 +1,4 @@
-"use node";
+'use node';
 
 import { action, internalAction } from '../../_generated/server';
 import { internal } from '../../_generated/api';
@@ -15,25 +15,25 @@ export const buildFullDatabase = internalAction({
     resumeFromId: v.optional(v.string()),
     batchSize: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<{
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
     syncId: string;
     success: boolean;
     totalPages: number;
     totalSeries: number;
     message: string;
   }> => {
-    // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient();
-
     const startPage = args.startPage ?? 0;
     const batchSize = args.batchSize ?? 500; // TVDB default page size
-    
+
     // Log the sync session
     const syncId = `full_sync_${Date.now()}`;
     await ctx.runMutation(internal.tvdb.syncer.mutations.logSyncStart, {
       syncId,
       entityType: 'full_database',
-      metadata: { startPage, batchSize }
+      metadata: { startPage, batchSize },
     });
 
     try {
@@ -50,14 +50,14 @@ export const buildFullDatabase = internalAction({
         success: true,
         totalPages: result.totalPages,
         totalSeries: result.totalSeries,
-        message: `Full database sync initiated. Processing ${result.totalSeries} series across ${result.totalPages} pages.`
+        message: `Full database sync initiated. Processing ${result.totalSeries} series across ${result.totalPages} pages.`,
       };
     } catch (error) {
       await ctx.runMutation(internal.tvdb.syncer.mutations.logSyncError, {
         syncId,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
       });
-      
+
       throw error;
     }
   },
@@ -89,7 +89,7 @@ export const syncAllSeriesPage = internalAction({
 
     const series = response.data;
     const links = response.links;
-    
+
     // Resume from a specific ID if provided (for recovery)
     let startProcessing = !args.resumeFromId;
     let processed = 0;
@@ -131,7 +131,7 @@ export const syncAllSeriesPage = internalAction({
               skipped,
               currentSeriesId: show.id.toString(),
               currentSeriesName: show.name,
-            }
+            },
           });
         }
       } catch (error) {
@@ -142,7 +142,7 @@ export const syncAllSeriesPage = internalAction({
 
     // Process next page if available
     const hasNextPage = links?.next !== undefined && links.next !== null;
-    
+
     if (hasNextPage && links?.next) {
       // Schedule next page processing
       await ctx.scheduler.runAfter(1000, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
@@ -156,8 +156,8 @@ export const syncAllSeriesPage = internalAction({
         syncId: args.syncId,
         metadata: {
           totalPages: args.page + 1,
-          totalSeries: (args.page * args.batchSize) + processed,
-        }
+          totalSeries: args.page * args.batchSize + processed,
+        },
       });
     }
 
@@ -199,7 +199,10 @@ export const getFullSyncStatus = internalAction({
   args: {
     syncId: v.string(),
   },
-  handler: async (ctx, args): Promise<{
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
     syncId: string;
     status: 'complete' | 'error' | 'running';
     startedAt?: number;
@@ -233,10 +236,10 @@ export const getFullSyncStatus = internalAction({
     };
 
     // Calculate progress
-    const startLog = logs.find(l => l.action === 'start');
-    const progressLogs = logs.filter(l => l.action === 'progress');
-    const completeLog: SyncLog | undefined = logs.find(l => l.action === 'complete');
-    const errorLogs = logs.filter(l => l.action === 'error');
+    const startLog = logs.find((l) => l.action === 'start');
+    const progressLogs = logs.filter((l) => l.action === 'progress');
+    const completeLog: SyncLog | undefined = logs.find((l) => l.action === 'complete');
+    const errorLogs = logs.filter((l) => l.action === 'error');
 
     const lastProgress = progressLogs[progressLogs.length - 1];
 
@@ -256,11 +259,10 @@ export const getFullSyncStatus = internalAction({
         ready: queueStatus.ready,
         failed: queueStatus.failed,
       },
-      errors: errorLogs.map(e => ({
+      errors: errorLogs.map((e) => ({
         timestamp: e.timestamp,
         message: e.message,
       })),
     };
   },
 });
-
