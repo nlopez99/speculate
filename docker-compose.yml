@@ -91,25 +91,24 @@ services:
     networks:
       - speculate_network
 
-  # # # Caddy (optional - for production-like HTTPS setup)
-  # caddy:
-  #   image: caddy
-  #   container_name: caddy
-  #   hostname: caddy
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   ports:
-  #     - '80:80'
-  #     - '443:443'
-  #     - '443:443/udp'
-  #   volumes:
-  #     - /etc/caddy/Caddyfile:/etc/caddy/Caddyfile
-  #     - /data/caddy/config:/caddy_config
-  #     - /data/caddy/data:/caddy_data
-  #   profiles:
-  #     - production
-  #   networks:
-  #     - speculate_network
+  caddy:
+    image: caddy
+    container_name: caddy
+    hostname: caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - /etc/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - /data/caddy/config:/caddy_config
+      - /data/caddy/data:/caddy_data
+    profiles:
+      - production
+    networks:
+      - speculate_network
 
 networks:
   speculate_network:
