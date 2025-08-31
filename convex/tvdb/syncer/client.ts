@@ -29,7 +29,7 @@ export async function getAuthenticatedClient(): Promise<TVDBClient> {
   if (needsNewAuth) {
     // Create new client instance if needed
     if (!clientInstance) {
-      clientInstance = new TVDBClient();
+      clientInstance = new TVDBClient('https://api4.thetvdb.com/v4');
     }
     
     // Authenticate with API key
