@@ -33,6 +33,28 @@ services:
     networks:
       - speculate_network
 
+  # Convex Schema Deployer - deploys schema and functions to the backend
+  convex-deployer:
+    container_name: convex-deployer
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./convex:/app/convex
+      - ./package.json:/app/package.json
+      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
+      - ./.env:/app/.env
+    env_file:
+      - .env
+    environment:
+      - CONVEX_URL=http://convex-backend:3210
+    command: sh -c "npm install -g pnpm && pnpm install && npx convex dev --env-file .env"
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+    networks:
+      - speculate_network
+    restart: unless-stopped
+
   convex-dashboard:
     image: ghcr.io/get-convex/convex-dashboard:6efab6f2b6c182b90255774d747328cfc7b80dd9
     container_name: convex-dashboard
