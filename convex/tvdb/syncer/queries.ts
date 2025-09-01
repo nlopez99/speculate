@@ -1,7 +1,6 @@
 import { internalQuery, query } from '../../_generated/server';
 import { v } from 'convex/values';
 import { paginationOptsValidator } from 'convex/server';
-import { Doc } from '../../_generated/dataModel';
 
 // ============================================================================
 // Config Queries
@@ -13,25 +12,25 @@ export const getStoredAuthToken = internalQuery({
       .query('tvdbSyncConfig')
       .withIndex('key', (q) => q.eq('key', 'auth_token'))
       .first();
-    
+
     const expiresConfig = await ctx.db
       .query('tvdbSyncConfig')
       .withIndex('key', (q) => q.eq('key', 'auth_token_expires_at'))
       .first();
-    
+
     if (!tokenConfig || !expiresConfig) {
       return null;
     }
-    
+
     const token = tokenConfig.value as string;
     const expiresAt = expiresConfig.value as number;
     const now = Date.now();
-    
+
     // Check if token is still valid (with 5 minute buffer)
     if (expiresAt - now < 5 * 60 * 1000) {
       return null; // Token expired or expiring soon
     }
-    
+
     return { token, expiresAt };
   },
 });
@@ -54,9 +53,9 @@ export const getConfig = internalQuery({
   handler: async (ctx, args) => {
     const config = await ctx.db
       .query('tvdbSyncConfig')
-      .withIndex('key', q => q.eq('key', args.key))
+      .withIndex('key', (q) => q.eq('key', args.key))
       .first();
-    
+
     return config?.value;
   },
 });
@@ -64,11 +63,14 @@ export const getConfig = internalQuery({
 export const getAllConfig = query({
   handler: async (ctx) => {
     const configs = await ctx.db.query('tvdbSyncConfig').collect();
-    
-    return configs.reduce((acc, config) => {
-      acc[config.key] = config.value;
-      return acc;
-    }, {} as Record<string, string | number | boolean>);
+
+    return configs.reduce(
+      (acc, config) => {
+        acc[config.key] = config.value;
+        return acc;
+      },
+      {} as Record<string, string | number | boolean>
+    );
   },
 });
 
@@ -91,7 +93,7 @@ export const shouldSyncEntity = internalQuery({
   handler: async (ctx, args) => {
     const state = await ctx.db
       .query('tvdbSyncState')
-      .withIndex('entityType_entityId', q =>
+      .withIndex('entityType_entityId', (q) =>
         q.eq('entityType', args.entityType).eq('entityId', args.entityId)
       )
       .first();
@@ -103,7 +105,7 @@ export const shouldSyncEntity = internalQuery({
     // Check if sync is enabled
     const syncEnabled = await ctx.db
       .query('tvdbSyncConfig')
-      .withIndex('key', q => q.eq('key', 'sync_enabled'))
+      .withIndex('key', (q) => q.eq('key', 'sync_enabled'))
       .first();
 
     if (syncEnabled?.value === false) {
@@ -113,10 +115,10 @@ export const shouldSyncEntity = internalQuery({
     // Skip if recently synced (within last hour by default)
     const syncIntervalHours = await ctx.db
       .query('tvdbSyncConfig')
-      .withIndex('key', q => q.eq('key', 'sync_interval_hours'))
+      .withIndex('key', (q) => q.eq('key', 'sync_interval_hours'))
       .first();
 
-    const intervalMs = (syncIntervalHours?.value as number || 1) * 60 * 60 * 1000;
+    const intervalMs = ((syncIntervalHours?.value as number) || 1) * 60 * 60 * 1000;
     const timeSinceLastSync = Date.now() - state.lastSyncedAt;
 
     return timeSinceLastSync > intervalMs;
@@ -125,20 +127,19 @@ export const shouldSyncEntity = internalQuery({
 
 export const getSyncState = query({
   args: {
-    entityType: v.optional(v.union(
-      v.literal('series'),
-      v.literal('season'),
-      v.literal('episode'),
-      v.literal('movie'),
-      v.literal('person'),
-      v.literal('company')
-    )),
-    status: v.optional(v.union(
-      v.literal('synced'),
-      v.literal('pending'),
-      v.literal('failed'),
-      v.literal('conflict')
-    )),
+    entityType: v.optional(
+      v.union(
+        v.literal('series'),
+        v.literal('season'),
+        v.literal('episode'),
+        v.literal('movie'),
+        v.literal('person'),
+        v.literal('company')
+      )
+    ),
+    status: v.optional(
+      v.union(v.literal('synced'), v.literal('pending'), v.literal('failed'), v.literal('conflict'))
+    ),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -146,11 +147,11 @@ export const getSyncState = query({
 
     // Filter by entity type if provided
     if (args.entityType) {
-      query = query.filter(q => q.eq(q.field('entityType'), args.entityType));
+      query = query.filter((q) => q.eq(q.field('entityType'), args.entityType));
     }
 
     if (args.status) {
-      query = query.filter(q => q.eq(q.field('status'), args.status));
+      query = query.filter((q) => q.eq(q.field('status'), args.status));
     }
 
     return await query.order('desc').paginate(args.paginationOpts);
@@ -182,9 +183,7 @@ export const getMapping = internalQuery({
   handler: async (ctx, args) => {
     return await ctx.db
       .query('tvdbIdMapping')
-      .withIndex('tvdbId_type', q =>
-        q.eq('tvdbId', args.tvdbId).eq('tvdbType', args.tvdbType)
-      )
+      .withIndex('tvdbId_type', (q) => q.eq('tvdbId', args.tvdbId).eq('tvdbType', args.tvdbType))
       .first();
   },
 });
@@ -196,7 +195,7 @@ export const getMappingByConvexId = query({
   handler: async (ctx, args) => {
     return await ctx.db
       .query('tvdbIdMapping')
-      .filter(q => q.eq(q.field('convexId'), args.convexId))
+      .filter((q) => q.eq(q.field('convexId'), args.convexId))
       .first();
   },
 });
@@ -211,25 +210,22 @@ export const getSyncProgress = query({
   },
   handler: async (ctx, args) => {
     let logs;
-    
+
     if (args.syncId) {
       logs = await ctx.db
         .query('tvdbSyncLog')
-        .filter(q => q.eq(q.field('syncId'), args.syncId))
+        .filter((q) => q.eq(q.field('syncId'), args.syncId))
         .collect();
     } else {
       // Get latest sync session
-      logs = await ctx.db
-        .query('tvdbSyncLog')
-        .order('desc')
-        .take(100);
+      logs = await ctx.db.query('tvdbSyncLog').order('desc').take(100);
     }
 
     const total = logs.length;
-    const completed = logs.filter(l => l.status === 'completed').length;
-    const failed = logs.filter(l => l.status === 'failed').length;
-    const skipped = logs.filter(l => l.status === 'skipped').length;
-    const inProgress = logs.filter(l => l.status === 'started').length;
+    const completed = logs.filter((l) => l.status === 'completed').length;
+    const failed = logs.filter((l) => l.status === 'failed').length;
+    const skipped = logs.filter((l) => l.status === 'skipped').length;
+    const inProgress = logs.filter((l) => l.status === 'started').length;
 
     const firstLog = logs.sort((a, b) => a.startedAt - b.startedAt)[0];
     const lastLog = logs.sort((a, b) => b.startedAt - a.startedAt)[0];
@@ -242,13 +238,14 @@ export const getSyncProgress = query({
       inProgress,
       startedAt: firstLog?.startedAt,
       lastActivity: lastLog?.startedAt,
-      estimatedCompletionAt: inProgress > 0 
-        ? Date.now() + (inProgress * 5000) // Rough estimate
-        : undefined,
+      estimatedCompletionAt:
+        inProgress > 0
+          ? Date.now() + inProgress * 5000 // Rough estimate
+          : undefined,
       recentErrors: logs
-        .filter(l => l.status === 'failed' && l.error)
+        .filter((l) => l.status === 'failed' && l.error)
         .slice(0, 5)
-        .map(l => ({
+        .map((l) => ({
           entityType: l.entityType,
           entityId: l.entityId,
           error: l.error,
@@ -266,13 +263,13 @@ export const getSyncStats = query({
   handler: async (ctx) => {
     // Count synced entities
     const syncStates = await ctx.db.query('tvdbSyncState').collect();
-    
+
     const stats = {
       total: syncStates.length,
-      synced: syncStates.filter(s => s.status === 'synced').length,
-      failed: syncStates.filter(s => s.status === 'failed').length,
-      pending: syncStates.filter(s => s.status === 'pending').length,
-      conflicts: syncStates.filter(s => s.status === 'conflict').length,
+      synced: syncStates.filter((s) => s.status === 'synced').length,
+      failed: syncStates.filter((s) => s.status === 'failed').length,
+      pending: syncStates.filter((s) => s.status === 'pending').length,
+      conflicts: syncStates.filter((s) => s.status === 'conflict').length,
       byEntityType: {} as Record<string, number>,
       lastSyncTimes: {} as Record<string, number>,
     };
@@ -280,9 +277,11 @@ export const getSyncStats = query({
     // Group by entity type
     for (const state of syncStates) {
       stats.byEntityType[state.entityType] = (stats.byEntityType[state.entityType] || 0) + 1;
-      
-      if (!stats.lastSyncTimes[state.entityType] || 
-          state.lastSyncedAt > stats.lastSyncTimes[state.entityType]) {
+
+      if (
+        !stats.lastSyncTimes[state.entityType] ||
+        state.lastSyncedAt > stats.lastSyncTimes[state.entityType]
+      ) {
         stats.lastSyncTimes[state.entityType] = state.lastSyncedAt;
       }
     }
@@ -290,7 +289,7 @@ export const getSyncStats = query({
     // Get config
     const lastFullSync = await ctx.db
       .query('tvdbSyncConfig')
-      .withIndex('key', q => q.eq('key', 'last_full_sync'))
+      .withIndex('key', (q) => q.eq('key', 'last_full_sync'))
       .first();
 
     return {
@@ -318,10 +317,10 @@ export const searchMappings = query({
   },
   handler: async (ctx, args) => {
     const searchTerm = args.query.toLowerCase();
-    
+
     return await ctx.db
       .query('tvdbIdMapping')
-      .filter(q =>
+      .filter((q) =>
         q.or(
           q.eq(q.field('tvdbId'), searchTerm),
           q.eq(q.field('tmdbId'), searchTerm),
@@ -343,7 +342,7 @@ export const getSyncLogs = internalQuery({
   handler: async (ctx, args) => {
     return await ctx.db
       .query('tvdbSyncLog')
-      .withIndex('syncId', q => q.eq('syncId', args.syncId))
+      .withIndex('syncId', (q) => q.eq('syncId', args.syncId))
       .order('asc')
       .collect();
   },

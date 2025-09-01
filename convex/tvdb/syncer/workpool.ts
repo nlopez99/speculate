@@ -1,4 +1,10 @@
-import { Workpool, vWorkIdValidator, WorkId } from '@convex-dev/workpool';
+import {
+  Workpool,
+  vWorkIdValidator,
+  WorkId,
+  RetryOption,
+  EnqueueOptions,
+} from '@convex-dev/workpool';
 import { components } from '../../_generated/api';
 import { internal } from '../../_generated/api';
 import { v } from 'convex/values';
@@ -8,7 +14,7 @@ import { Doc } from '../../_generated/dataModel';
 // Create the workpool with appropriate settings for TVDB API syncing
 export const tvdbSyncPool = new Workpool(components.tvdbSyncPool, {
   // Limit parallelism to avoid overwhelming TVDB API
-  maxParallelism: 20,
+  maxParallelism: 50,
   // Enable retries for idempotent sync operations
   retryActionsByDefault: true,
   defaultRetryBehavior: {
@@ -53,10 +59,12 @@ export const enqueueSyncEntity = internalMutation({
   handler: async (ctx, args) => {
     // Enqueue based on entity type
     let workId: WorkId;
-    const options = {
+    const options: RetryOption & EnqueueOptions = {
+      name: `sync-${args.entityType}-${args.entityId}`,
+
       // Use priority to schedule execution (lower priority = run sooner)
       // Priority 1 = high (immediate), 5 = medium (500ms), 10 = low (1000ms)
-      runAfter: args.priority ? (args.priority - 1) * 100 : 0,
+      runAfter: args.priority ? (args.priority - 1) * 100 : 1,
       // Retry configuration (uses defaults if not specified)
       retry: true,
       // Store context for monitoring/debugging
@@ -77,7 +85,7 @@ export const enqueueSyncEntity = internalMutation({
             options: {
               force: args.force,
               shallow: args.shallow,
-              priority: args.priority ?? 5,
+              priority: args.priority,
             },
           },
           options
@@ -92,7 +100,7 @@ export const enqueueSyncEntity = internalMutation({
             options: {
               force: args.force,
               shallow: args.shallow,
-              priority: args.priority ?? 5,
+              priority: args.priority,
             },
           },
           options
@@ -107,7 +115,7 @@ export const enqueueSyncEntity = internalMutation({
             options: {
               force: args.force,
               shallow: args.shallow,
-              priority: args.priority ?? 5,
+              priority: args.priority,
             },
           },
           options
