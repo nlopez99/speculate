@@ -36,18 +36,13 @@ services:
   # Convex Schema Deployer - deploys schema and functions to the backend
   convex-deployer:
     container_name: convex-deployer
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ./convex:/app/convex
-      - ./package.json:/app/package.json
-      - ./pnpm-lock.yaml:/app/pnpm-lock.yaml
-      - ./.env:/app/.env
+    build:
+      context: .
+      dockerfile: Dockerfile
     env_file:
       - .env
     environment:
       - CONVEX_URL=http://convex-backend:3210
-    command: sh -c "npm install -g pnpm && pnpm install && npx convex dev --env-file .env"
     depends_on:
       convex-backend:
         condition: service_healthy
