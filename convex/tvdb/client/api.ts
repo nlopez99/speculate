@@ -1,4 +1,4 @@
-import redaxios from 'redaxios';
+import axios, { AxiosInstance } from 'axios';
 
 // ============================================================================
 // Type Definitions
@@ -715,11 +715,11 @@ export type MetaType = 'translations' | 'episodes';
 // ============================================================================
 
 export class TVDBClient {
-  private client: typeof redaxios;
+  private client: AxiosInstance;
   private token?: string;
 
   constructor(baseURL = 'https://api4.thetvdb.com/v4') {
-    this.client = redaxios.create({
+    this.client = axios.create({
       baseURL,
       headers: {
         'Content-Type': 'application/json',
@@ -735,10 +735,12 @@ export class TVDBClient {
 
     console.log('Token set:', token);
 
-    this.client.defaults.headers = {
-      ...this.client.defaults.headers,
-      Authorization: `Bearer ${this.token}`,
-    };
+    this.client.interceptors.request.use((config) => {
+      if (this.token) {
+        config.headers.Authorization = `Bearer ${this.token}`;
+      }
+      return config;
+    });
   }
 
   /**
