@@ -19,10 +19,19 @@ export async function getAuthenticatedClient(): Promise<TVDBClient> {
 
   const now = Date.now();
 
-  // Create new client instance if needed
-  clientInstance ??= new TVDBClient();
+  // Check if we need to create a new client or re-authenticate
+  const needsAuth = !clientInstance || (now - lastLoginTime > TOKEN_LIFETIME_MS);
 
-  console.log(`[TVDB] Authenticated new session at ${new Date(now).toISOString()}`);
+  if (needsAuth) {
+    // Create new client instance
+    clientInstance = new TVDBClient();
+    
+    // Authenticate with the API
+    await clientInstance.login({ apikey: apiKey });
+    
+    lastLoginTime = now;
+    console.log(`[TVDB] Authenticated new session at ${new Date(now).toISOString()}`);
+  }
 
   if (!clientInstance) {
     throw new Error('Failed to initialize TVDB client');
