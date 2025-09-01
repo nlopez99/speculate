@@ -71,104 +71,110 @@ export const syncAllSeriesPage = internalAction({
     resumeFromId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient();
+    try {
+      // Get authenticated client (reuses existing token)
+      const client = await getAuthenticatedClient();
 
-    // Get series for this page
-    const response = await client.getAllSeries(args.page);
+      // Get series for this page
+      const response = await client.getAllSeries(args.page);
 
-    if (!response.data || response.data.length === 0) {
-      return {
-        page: args.page,
-        totalPages: 0,
-        totalSeries: 0,
-        processed: 0,
-        hasMore: false,
-      };
-    }
-
-    const series = response.data;
-    const links = response.links;
-
-    // Resume from a specific ID if provided (for recovery)
-    let startProcessing = !args.resumeFromId;
-    let processed = 0;
-    let skipped = 0;
-
-    for (const show of series) {
-      if (!startProcessing) {
-        if (show.id?.toString() === args.resumeFromId) {
-          startProcessing = true;
-        } else {
-          skipped++;
-          continue;
-        }
+      if (!response.data || response.data.length === 0) {
+        return {
+          page: args.page,
+          totalPages: 0,
+          totalSeries: 0,
+          processed: 0,
+          hasMore: false,
+        };
       }
 
-      if (!show.id) continue;
+      const series = response.data;
+      const links = response.links;
 
-      try {
-        // Queue the series for deep sync using workpool
-        await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-          entityType: 'series',
-          entityId: show.id.toString(),
-          priority: 5, // Medium priority for bulk sync
-          metadata: {
-            source: 'manual',
-          },
-        });
+      // Resume from a specific ID if provided (for recovery)
+      let startProcessing = !args.resumeFromId;
+      let processed = 0;
+      let skipped = 0;
 
-        processed++;
+      for (const show of series) {
+        if (!startProcessing) {
+          if (show.id?.toString() === args.resumeFromId) {
+            startProcessing = true;
+          } else {
+            skipped++;
+            continue;
+          }
+        }
 
-        // Log progress every 100 series
-        if (processed % 100 === 0) {
-          await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
-            syncId: args.syncId,
-            message: `Page ${args.page}: Processed ${processed} series (skipped ${skipped})`,
+        if (!show.id) continue;
+
+        try {
+          // Queue the series for deep sync using workpool
+          await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+            entityType: 'series',
+            entityId: show.id.toString(),
+            priority: 5, // Medium priority for bulk sync
             metadata: {
-              page: args.page,
-              processed,
-              skipped,
-              currentSeriesId: show.id.toString(),
-              currentSeriesName: show.name,
+              source: 'manual',
             },
           });
+
+          processed++;
+
+          // Log progress every 100 series
+          if (processed % 100 === 0) {
+            await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
+              syncId: args.syncId,
+              message: `Page ${args.page}: Processed ${processed} series (skipped ${skipped})`,
+              metadata: {
+                page: args.page,
+                processed,
+                skipped,
+                currentSeriesId: show.id.toString(),
+                currentSeriesName: show.name,
+              },
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to queue series ${show.id}: ${error}`);
+          // Continue with next series even if one fails
         }
-      } catch (error) {
-        console.error(`Failed to queue series ${show.id}: ${error}`);
-        // Continue with next series even if one fails
       }
+
+      // Process next page if available
+      const hasNextPage = links?.next !== undefined && links.next !== null;
+
+      if (hasNextPage && links?.next) {
+        // Schedule next page processing
+        await ctx.scheduler.runAfter(1000, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
+          page: parseInt(links.next, 10),
+          syncId: args.syncId,
+          batchSize: args.batchSize,
+        });
+      } else {
+        // Mark sync as complete
+        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
+          syncId: args.syncId,
+          metadata: {
+            totalPages: args.page + 1,
+            totalSeries: args.page * args.batchSize + processed,
+          },
+        });
+      }
+
+      return {
+        page: args.page,
+        totalPages: links?.last || args.page,
+        totalSeries: links?.total_items || processed,
+        processed,
+        skipped,
+        hasMore: hasNextPage,
+      };
+    } catch (err) {
+      console.log(err);
+
+      throw err;
     }
-
-    // Process next page if available
-    const hasNextPage = links?.next !== undefined && links.next !== null;
-
-    if (hasNextPage && links?.next) {
-      // Schedule next page processing
-      await ctx.scheduler.runAfter(1000, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
-        page: parseInt(links.next, 10),
-        syncId: args.syncId,
-        batchSize: args.batchSize,
-      });
-    } else {
-      // Mark sync as complete
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
-        syncId: args.syncId,
-        metadata: {
-          totalPages: args.page + 1,
-          totalSeries: args.page * args.batchSize + processed,
-        },
-      });
-    }
-
-    return {
-      page: args.page,
-      totalPages: links?.last || args.page,
-      totalSeries: links?.total_items || processed,
-      processed,
-      skipped,
-      hasMore: hasNextPage,
-    };
   },
 });
 
