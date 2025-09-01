@@ -733,8 +733,6 @@ export class TVDBClient {
   setToken(token: string): void {
     this.token = token;
 
-    console.log('Token set:', token);
-
     this.client.interceptors.request.use((config) => {
       if (this.token) {
         config.headers.Authorization = `Bearer ${this.token}`;
