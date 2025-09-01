@@ -732,9 +732,12 @@ export class TVDBClient {
    */
   setToken(token: string): void {
     this.token = token;
+
+    console.log('Token set:', token);
+
     this.client.defaults.headers = {
       ...this.client.defaults.headers,
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${this.token}`,
     };
   }
 
@@ -743,9 +746,14 @@ export class TVDBClient {
    */
   async login(credentials: LoginRequest): Promise<LoginResponse> {
     const response = await this.client.post<LoginResponse>('/login', credentials);
-    if (response.data.data?.token) {
-      this.setToken(response.data.data.token);
+
+    console.log({ loginResponse: response.data, status: response.status });
+
+    if (!response.data.data?.token) {
+      throw new Error('Invalid credentials');
     }
+
+    this.setToken(response.data.data.token);
     return response.data;
   }
 

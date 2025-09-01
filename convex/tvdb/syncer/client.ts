@@ -20,11 +20,7 @@ export async function getAuthenticatedClient(): Promise<TVDBClient> {
   const now = Date.now();
 
   // Create new client instance if needed
-  clientInstance ??= new TVDBClient('https://api4.thetvdb.com/v4');
-
-  // Authenticate with API key
-  await clientInstance.login({ apikey: apiKey });
-  lastLoginTime = now;
+  clientInstance ??= new TVDBClient();
 
   console.log(`[TVDB] Authenticated new session at ${new Date(now).toISOString()}`);
 
