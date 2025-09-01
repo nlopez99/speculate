@@ -74,9 +74,11 @@ export const syncAllSeriesPage = internalAction({
       const client = await getAuthenticatedClient(ctx);
 
       // Get series for this page
+      console.log(`[Full Sync] Fetching page ${args.page} from TVDB API`);
       const response = await client.getAllSeries(args.page);
 
       if (!response.data || response.data.length === 0) {
+        console.log(`[Full Sync] No data returned for page ${args.page}`);
         return {
           page: args.page,
           totalPages: 0,
@@ -88,6 +90,13 @@ export const syncAllSeriesPage = internalAction({
 
       const series = response.data;
       const links = response.links;
+
+      console.log(`[Full Sync] Page ${args.page}: Found ${series.length} series. Links:`, {
+        next: links?.next,
+        last: links?.last,
+        total_items: links?.total_items,
+        page_size: links?.page_size,
+      });
 
       // Resume from a specific ID if provided (for recovery)
       let startProcessing = !args.resumeFromId;
@@ -107,20 +116,33 @@ export const syncAllSeriesPage = internalAction({
         if (!show.id) continue;
 
         try {
-          // Queue the series for deep sync using workpool
-          await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-            entityType: 'series',
-            entityId: show.id.toString(),
-            priority: 5, // Medium priority for bulk sync
-            metadata: {
-              source: 'manual',
-            },
+          // Check if this series is already synced or queued to avoid duplicates
+          const existingMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
+            tvdbId: show.id.toString(),
+            tvdbType: 'series',
           });
 
-          processed++;
+          if (existingMapping && !args.resumeFromId) {
+            // Skip if already mapped (unless we're resuming from a specific ID)
+            console.log(`[Full Sync] Skipping already synced series: ${show.id} - ${show.name}`);
+            skipped++;
+          } else {
+            // Queue the series for deep sync using workpool
+            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+              entityType: 'series',
+              entityId: show.id.toString(),
+              priority: 5, // Medium priority for bulk sync
+              metadata: {
+                source: 'manual',
+              },
+            });
 
-          // Log progress every 100 series
-          if (processed % 100 === 0) {
+            processed++;
+            console.log(`[Full Sync] Queued series ${processed}: ${show.id} - ${show.name}`);
+          }
+
+          // Log progress every 50 series (more frequent for debugging)
+          if ((processed + skipped) % 50 === 0) {
             await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
               syncId: args.syncId,
               message: `Page ${args.page}: Processed ${processed} series (skipped ${skipped})`,
@@ -139,23 +161,40 @@ export const syncAllSeriesPage = internalAction({
         }
       }
 
+      // Log page completion
+      console.log(
+        `[Full Sync] Page ${args.page} complete: processed=${processed}, skipped=${skipped}, total=${processed + skipped}`
+      );
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
+        syncId: args.syncId,
+        message: `Page ${args.page} complete: Processed ${processed} new series, skipped ${skipped} existing`,
+        metadata: {
+          page: args.page,
+          processed,
+          skipped,
+        },
+      });
+
       // Process next page if available
       const hasNextPage = links?.next !== undefined && links.next !== null;
+      const nextPage = args.page + 1; // TVDB pagination is 0-indexed, increment by 1
 
-      if (hasNextPage && links?.next) {
+      if (hasNextPage) {
         // Schedule next page processing
+        console.log(`[Full Sync] Scheduling next page: ${nextPage} (current: ${args.page})`);
         await ctx.scheduler.runAfter(1000, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
-          page: parseInt(links.next, 10),
+          page: nextPage,
           syncId: args.syncId,
           batchSize: args.batchSize,
         });
       } else {
         // Mark sync as complete
+        console.log(`[Full Sync] No more pages. Completing sync.`);
         await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
           syncId: args.syncId,
           metadata: {
             totalPages: args.page + 1,
-            totalSeries: args.page * args.batchSize + processed,
+            totalSeries: links?.total_items || args.page * args.batchSize + processed,
           },
         });
       }
