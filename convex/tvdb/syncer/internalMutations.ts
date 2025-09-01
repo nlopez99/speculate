@@ -1,4 +1,4 @@
-import { internalMutation, mutation } from '../../_generated/server';
+import { internalMutation } from '../../_generated/server';
 import { v } from 'convex/values';
 import { SeriesExtendedRecord, EpisodeExtendedRecord, SeasonExtendedRecord } from '../client/api';
 import { SyncChanges } from './types';
@@ -381,13 +381,13 @@ export const storeAuthToken = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    
+
     // Store token
     const tokenConfig = await ctx.db
       .query('tvdbSyncConfig')
       .withIndex('key', (q) => q.eq('key', 'auth_token'))
       .first();
-    
+
     if (tokenConfig) {
       await ctx.db.patch(tokenConfig._id, {
         value: args.token,
@@ -400,13 +400,13 @@ export const storeAuthToken = internalMutation({
         updatedAt: now,
       });
     }
-    
+
     // Store expiration time
     const expiresConfig = await ctx.db
       .query('tvdbSyncConfig')
       .withIndex('key', (q) => q.eq('key', 'auth_token_expires_at'))
       .first();
-    
+
     if (expiresConfig) {
       await ctx.db.patch(expiresConfig._id, {
         value: args.expiresAt,
@@ -419,7 +419,7 @@ export const storeAuthToken = internalMutation({
         updatedAt: now,
       });
     }
-    
+
     return { success: true };
   },
 });
@@ -577,7 +577,6 @@ export const logSyncStart = internalMutation({
     metadata: v.optional(
       v.object({
         startPage: v.optional(v.number()),
-        batchSize: v.optional(v.number()),
       })
     ),
   },

@@ -47,14 +47,12 @@ export const startFullDatabaseSync = mutation({
       startedAt: Date.now(),
       metadata: {
         initiatedBy: 'manual',
-        batchSize: 500,
       },
     });
 
     // Schedule the actual sync to run
     await ctx.scheduler.runAfter(0, internal.tvdb.syncer.fullSync.buildFullDatabase, {
       startPage: 0,
-      batchSize: 500,
     });
 
     return {
@@ -123,28 +121,6 @@ export const setSyncEnabled = mutation({
     return {
       success: true,
       message: `Sync ${args.enabled ? 'enabled' : 'disabled'}`,
-    };
-  },
-});
-
-/**
- * Clear the sync queue - now managed by workpool
- * This mutation is deprecated but kept for backward compatibility
- */
-export const clearSyncQueue = mutation({
-  args: {
-    confirmDangerous: v.literal('I want to clear the entire queue'),
-  },
-  handler: async (ctx, args) => {
-    if (args.confirmDangerous !== 'I want to clear the entire queue') {
-      throw new Error('Please confirm you want to clear the queue');
-    }
-
-    // Workpool manages its own queue internally
-    // This is now a no-op for backward compatibility
-    return {
-      success: true,
-      message: 'Queue management is now handled by workpool component',
     };
   },
 });

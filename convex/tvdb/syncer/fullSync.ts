@@ -1,4 +1,4 @@
-import { action, internalAction } from '../../_generated/server';
+import { internalAction } from '../../_generated/server';
 import { internal } from '../../_generated/api';
 import { v } from 'convex/values';
 import { getAuthenticatedClient } from './client';
@@ -11,7 +11,6 @@ export const buildFullDatabase = internalAction({
   args: {
     startPage: v.optional(v.number()),
     resumeFromId: v.optional(v.string()),
-    batchSize: v.optional(v.number()),
   },
   handler: async (
     ctx,
@@ -24,14 +23,13 @@ export const buildFullDatabase = internalAction({
     message: string;
   }> => {
     const startPage = args.startPage ?? 0;
-    const batchSize = args.batchSize ?? 500; // TVDB default page size
 
     // Log the sync session
     const syncId = `full_sync_${Date.now()}`;
     await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncStart, {
       syncId,
       entityType: 'full_database',
-      metadata: { startPage, batchSize },
+      metadata: { startPage },
     });
 
     try {
@@ -39,7 +37,6 @@ export const buildFullDatabase = internalAction({
       const result = await ctx.runAction(internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
         page: startPage,
         syncId,
-        batchSize,
         resumeFromId: args.resumeFromId,
       });
 
@@ -65,7 +62,6 @@ export const syncAllSeriesPage = internalAction({
   args: {
     page: v.number(),
     syncId: v.string(),
-    batchSize: v.number(),
     resumeFromId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -131,7 +127,6 @@ export const syncAllSeriesPage = internalAction({
             await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
               entityType: 'series',
               entityId: show.id.toString(),
-              priority: 5, // Medium priority for bulk sync
               metadata: {
                 source: 'manual',
               },
@@ -185,7 +180,6 @@ export const syncAllSeriesPage = internalAction({
         await ctx.scheduler.runAfter(1000, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
           page: nextPage,
           syncId: args.syncId,
-          batchSize: args.batchSize,
         });
       } else {
         // Mark sync as complete
@@ -194,7 +188,7 @@ export const syncAllSeriesPage = internalAction({
           syncId: args.syncId,
           metadata: {
             totalPages: args.page + 1,
-            totalSeries: links?.total_items || args.page * args.batchSize + processed,
+            totalSeries: links?.total_items || args.page + 1,
           },
         });
       }
@@ -212,100 +206,5 @@ export const syncAllSeriesPage = internalAction({
 
       throw err;
     }
-  },
-});
-
-// ============================================================================
-// Incremental Update Sync - DEPRECATED
-// ============================================================================
-// Use syncUpdates from actions.ts instead - it's the canonical implementation
-// The cron job correctly uses the one from actions.ts
-
-// ============================================================================
-// Status and Monitoring
-// ============================================================================
-
-interface SyncLog {
-  action: string;
-  timestamp?: number;
-  metadata?: any;
-  message?: string;
-}
-
-interface QueueStatus {
-  pending: number;
-  ready: number;
-  failed: number;
-}
-
-export const getFullSyncStatus = internalAction({
-  args: {
-    syncId: v.string(),
-  },
-  handler: async (
-    ctx,
-    args
-  ): Promise<{
-    syncId: string;
-    status: 'complete' | 'error' | 'running';
-    startedAt?: number;
-    completedAt?: number;
-    lastActivity?: number;
-    progress: {
-      currentPage: number;
-      processedSeries: number;
-      skippedSeries: number;
-    };
-    queue: {
-      pending: number;
-      ready: number;
-      failed: number;
-    };
-    errors: Array<{
-      timestamp?: number;
-      message?: string;
-    }>;
-  }> => {
-    // Get sync logs
-    const logs: SyncLog[] = await ctx.runQuery(internal.tvdb.syncer.queries.getSyncLogs, {
-      syncId: args.syncId,
-    });
-
-    // Get queue status - using workpool status instead
-    const queueStatus: QueueStatus = {
-      pending: 0,
-      ready: 0,
-      failed: 0,
-    };
-
-    // Calculate progress
-    const startLog = logs.find((l) => l.action === 'start');
-    const progressLogs = logs.filter((l) => l.action === 'progress');
-    const completeLog: SyncLog | undefined = logs.find((l) => l.action === 'complete');
-    const errorLogs = logs.filter((l) => l.action === 'error');
-
-    const lastProgress = progressLogs[progressLogs.length - 1];
-
-    return {
-      syncId: args.syncId,
-      status: completeLog ? 'complete' : errorLogs.length > 0 ? 'error' : 'running',
-      startedAt: startLog?.timestamp,
-      completedAt: completeLog?.timestamp,
-      lastActivity: lastProgress?.timestamp || startLog?.timestamp,
-      progress: {
-        currentPage: lastProgress?.metadata?.page || 0,
-        processedSeries: lastProgress?.metadata?.processed || 0,
-        skippedSeries: lastProgress?.metadata?.skipped || 0,
-      },
-      queue: {
-        pending: queueStatus.pending,
-        ready: queueStatus.ready,
-        failed: queueStatus.failed,
-      },
-      errors: errorLogs.map((e) => ({
-        timestamp: e.timestamp,
-        message: e.message,
-      })),
-    };
   },
 });

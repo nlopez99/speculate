@@ -2,7 +2,7 @@ import { action, internalAction } from '../../_generated/server';
 import { internal } from '../../_generated/api';
 import { v } from 'convex/values';
 import { getAuthenticatedClient } from './client';
-import type { SyncOptions, SyncResult, TVDBEntityData, TVDBUpdateRecord } from './types';
+import type { SyncResult } from './types';
 
 // ============================================================================
 // Main Sync Actions
@@ -16,7 +16,6 @@ export const syncSeries = internalAction({
         force: v.optional(v.boolean()),
         shallow: v.optional(v.boolean()),
         priority: v.optional(v.number()),
-        maxDepth: v.optional(v.number()),
       })
     ),
   },

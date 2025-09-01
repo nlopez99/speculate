@@ -6,7 +6,6 @@ import {
   MovieExtendedRecord,
   PeopleExtendedRecord,
   Company,
-  Translation,
 } from '../client/api';
 
 // ============================================================================
@@ -17,7 +16,6 @@ export interface SyncOptions {
   force?: boolean; // Force sync even if recently synced
   shallow?: boolean; // Don't sync related entities
   priority?: number; // Queue priority
-  maxDepth?: number; // How deep to follow relations
 }
 
 export interface SyncChanges {
@@ -61,21 +59,11 @@ export interface ConflictResolution<T = TVDBEntityData> {
   resolver?: (tvdbData: T, localData: Partial<T>) => T;
 }
 
-export interface RateLimitState {
-  requests: number;
-  windowStart: number;
-  retryAfter?: number;
-}
-
 // ============================================================================
 // Entity Mapping Types
 // ============================================================================
 
-export type ConvexEntityId =
-  | Id<'shows'>
-  | Id<'episodes'>
-  | Id<'seasons'>
-  | Id<'characters'>;
+export type ConvexEntityId = Id<'shows'> | Id<'episodes'> | Id<'seasons'> | Id<'characters'>;
 
 export interface EntityMapping {
   tvdbId: string;
