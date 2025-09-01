@@ -374,6 +374,56 @@ export const upsertSeason = internalMutation({
 // Sync State Management
 // ============================================================================
 
+export const storeAuthToken = internalMutation({
+  args: {
+    token: v.string(),
+    expiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    
+    // Store token
+    const tokenConfig = await ctx.db
+      .query('tvdbSyncConfig')
+      .withIndex('key', (q) => q.eq('key', 'auth_token'))
+      .first();
+    
+    if (tokenConfig) {
+      await ctx.db.patch(tokenConfig._id, {
+        value: args.token,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert('tvdbSyncConfig', {
+        key: 'auth_token',
+        value: args.token,
+        updatedAt: now,
+      });
+    }
+    
+    // Store expiration time
+    const expiresConfig = await ctx.db
+      .query('tvdbSyncConfig')
+      .withIndex('key', (q) => q.eq('key', 'auth_token_expires_at'))
+      .first();
+    
+    if (expiresConfig) {
+      await ctx.db.patch(expiresConfig._id, {
+        value: args.expiresAt,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert('tvdbSyncConfig', {
+        key: 'auth_token_expires_at',
+        value: args.expiresAt,
+        updatedAt: now,
+      });
+    }
+    
+    return { success: true };
+  },
+});
+
 export const updateSyncState = internalMutation({
   args: {
     entityType: v.union(

@@ -7,10 +7,41 @@ import { Doc } from '../../_generated/dataModel';
 // Config Queries
 // ============================================================================
 
+export const getStoredAuthToken = internalQuery({
+  handler: async (ctx) => {
+    const tokenConfig = await ctx.db
+      .query('tvdbSyncConfig')
+      .withIndex('key', (q) => q.eq('key', 'auth_token'))
+      .first();
+    
+    const expiresConfig = await ctx.db
+      .query('tvdbSyncConfig')
+      .withIndex('key', (q) => q.eq('key', 'auth_token_expires_at'))
+      .first();
+    
+    if (!tokenConfig || !expiresConfig) {
+      return null;
+    }
+    
+    const token = tokenConfig.value as string;
+    const expiresAt = expiresConfig.value as number;
+    const now = Date.now();
+    
+    // Check if token is still valid (with 5 minute buffer)
+    if (expiresAt - now < 5 * 60 * 1000) {
+      return null; // Token expired or expiring soon
+    }
+    
+    return { token, expiresAt };
+  },
+});
+
 export const getConfig = internalQuery({
   args: {
     key: v.union(
       v.literal('api_key'),
+      v.literal('auth_token'),
+      v.literal('auth_token_expires_at'),
       v.literal('rate_limit_requests'),
       v.literal('rate_limit_window_ms'),
       v.literal('sync_enabled'),

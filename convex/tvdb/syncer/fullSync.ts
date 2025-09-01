@@ -71,7 +71,7 @@ export const syncAllSeriesPage = internalAction({
   handler: async (ctx, args) => {
     try {
       // Get authenticated client (reuses existing token)
-      const client = await getAuthenticatedClient();
+      const client = await getAuthenticatedClient(ctx);
 
       // Get series for this page
       const response = await client.getAllSeries(args.page);

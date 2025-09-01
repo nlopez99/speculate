@@ -22,7 +22,7 @@ export const syncSeries = internalAction({
   },
   handler: async (ctx, args): Promise<SyncResult> => {
     // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient();
+    const client = await getAuthenticatedClient(ctx);
 
     try {
       // Check if we should sync (unless forced)
@@ -122,7 +122,7 @@ export const syncEpisode = internalAction({
   },
   handler: async (ctx, args): Promise<SyncResult> => {
     // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient();
+    const client = await getAuthenticatedClient(ctx);
 
     try {
       // Check if we should sync
@@ -230,7 +230,7 @@ export const syncSeason = internalAction({
   },
   handler: async (ctx, args): Promise<SyncResult> => {
     // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient();
+    const client = await getAuthenticatedClient(ctx);
 
     try {
       // Fetch season data
@@ -307,7 +307,7 @@ export const syncUpdates = internalAction({
   },
   handler: async (ctx, args) => {
     // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient();
+    const client = await getAuthenticatedClient(ctx);
 
     const results = [];
     let currentPage = 0;

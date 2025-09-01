@@ -93,6 +93,8 @@ export const tvdbRawDataValidator = v.object({
 export const tvdbSyncConfigValidator = v.object({
   key: v.union(
     v.literal('api_key'),
+    v.literal('auth_token'),
+    v.literal('auth_token_expires_at'),
     v.literal('rate_limit_requests'),
     v.literal('rate_limit_window_ms'),
     v.literal('sync_enabled'),
