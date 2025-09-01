@@ -8,7 +8,9 @@
     "android": "expo start -c --android",
     "ios": "expo start -c --ios",
     "web": "expo start -c --web",
-    "clean": "rm -rf .expo node_modules"
+    "clean": "rm -rf .expo node_modules",
+    "convex:dev": "npx convex dev --env-file .env",
+    "convex:deploy": "npx convex deploy --env-file .env"
   },
   "dependencies": {
     "@auth/core": "0.37.0",

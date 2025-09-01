@@ -14,4 +14,7 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY . .
 
-CMD ["npx", "convex", "dev", "--env-file", ".env"]
+RUN pnpm build
+
+# Run the app
+CMD ["pnpm", "convex:dev"]
