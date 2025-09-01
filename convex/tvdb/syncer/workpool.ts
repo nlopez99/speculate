@@ -8,7 +8,7 @@ import { Doc } from '../../_generated/dataModel';
 // Create the workpool with appropriate settings for TVDB API syncing
 export const tvdbSyncPool = new Workpool(components.tvdbSyncPool, {
   // Limit parallelism to avoid overwhelming TVDB API
-  maxParallelism: 5,
+  maxParallelism: 20,
   // Enable retries for idempotent sync operations
   retryActionsByDefault: true,
   defaultRetryBehavior: {
@@ -16,7 +16,7 @@ export const tvdbSyncPool = new Workpool(components.tvdbSyncPool, {
     initialBackoffMs: 3000,
     base: 2, // Exponential backoff
   },
-  logLevel: 'INFO' as const,
+  logLevel: 'ERROR' as const,
 });
 
 // Queue a sync operation for a TVDB entity

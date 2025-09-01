@@ -37,8 +37,8 @@ export const upsertSeries = internalMutation({
       title: data.name || '',
       slug: data.slug || args.tvdbId,
       overview: data.overview,
-      posterUrl: data.image,
-      backdropUrl: data.artworks?.[0]?.image,
+      posterUrl: data.image || undefined,
+      backdropUrl: data.artworks?.[0]?.image || undefined,
       firstAirYear: data.firstAired ? new Date(data.firstAired).getFullYear() : undefined,
       status: mapSeriesStatus(data.status?.name),
       tvdbId: args.tvdbId,
@@ -216,7 +216,7 @@ export const upsertEpisode = internalMutation({
       runtimeMinutes: data.runtime || undefined, // Convert null to undefined
       tvdbId: args.tvdbId,
       imdbId: data.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
-      stillUrl: data.image,
+      stillUrl: data.image || undefined,
       hasAired: data.aired ? new Date(data.aired) <= new Date() : false,
       updatedAt: now,
     };
@@ -318,7 +318,7 @@ export const upsertSeason = internalMutation({
       seasonNumber: data.number || 0,
       title: data.name,
       tvdbId: args.tvdbId,
-      posterUrl: data.image,
+      posterUrl: data.image || undefined,
       episodeCount: data.episodes?.length,
       updatedAt: now,
     };
