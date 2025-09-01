@@ -1,4 +1,4 @@
-"use node";
+'use node';
 
 import { action, internalAction } from '../../_generated/server';
 import { internal } from '../../_generated/api';
@@ -50,7 +50,7 @@ export const syncSeries = internalAction({
       });
 
       // Store raw data for audit/debugging
-      await ctx.runMutation(internal.tvdb.syncer.mutations.storeRawData, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawData, {
         tvdbId: args.seriesId,
         entityType: 'series',
         data: JSON.stringify(seriesData.data),
@@ -58,7 +58,7 @@ export const syncSeries = internalAction({
       });
 
       // Upsert series data
-      const result = await ctx.runMutation(internal.tvdb.syncer.mutations.upsertSeries, {
+      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSeries, {
         tvdbData: seriesData.data,
         tvdbId: args.seriesId,
       });
@@ -93,7 +93,7 @@ export const syncSeries = internalAction({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       // Log failure
-      await ctx.runMutation(internal.tvdb.syncer.mutations.updateSyncState, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncState, {
         entityType: 'series',
         entityId: args.seriesId,
         status: 'failed',
@@ -148,7 +148,7 @@ export const syncEpisode = internalAction({
       const episodeData = await client.getEpisodeExtended(parseInt(args.episodeId), 'translations');
 
       // Store raw data
-      await ctx.runMutation(internal.tvdb.syncer.mutations.storeRawData, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawData, {
         tvdbId: args.episodeId,
         entityType: 'episode',
         data: JSON.stringify(episodeData.data),
@@ -156,7 +156,7 @@ export const syncEpisode = internalAction({
       });
 
       // Upsert episode data
-      const result = await ctx.runMutation(internal.tvdb.syncer.mutations.upsertEpisode, {
+      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertEpisode, {
         tvdbData: episodeData.data,
         tvdbId: args.episodeId,
       });
@@ -201,7 +201,7 @@ export const syncEpisode = internalAction({
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-      await ctx.runMutation(internal.tvdb.syncer.mutations.updateSyncState, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncState, {
         entityType: 'episode',
         entityId: args.episodeId,
         status: 'failed',
@@ -239,7 +239,7 @@ export const syncSeason = internalAction({
       const seasonData = await client.getSeasonExtended(parseInt(args.seasonId));
 
       // Store raw data
-      await ctx.runMutation(internal.tvdb.syncer.mutations.storeRawData, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawData, {
         tvdbId: args.seasonId,
         entityType: 'season',
         data: JSON.stringify(seasonData.data),
@@ -247,7 +247,7 @@ export const syncSeason = internalAction({
       });
 
       // Upsert season
-      const result = await ctx.runMutation(internal.tvdb.syncer.mutations.upsertSeason, {
+      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSeason, {
         tvdbData: seasonData.data,
         tvdbId: args.seasonId,
       });
@@ -280,7 +280,7 @@ export const syncSeason = internalAction({
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-      await ctx.runMutation(internal.tvdb.syncer.mutations.updateSyncState, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncState, {
         entityType: 'season',
         entityId: args.seasonId,
         status: 'failed',
@@ -319,12 +319,17 @@ export const syncUpdates = internalAction({
     // Process all pages of updates
     while (hasMore) {
       // Get updates from TVDB (TVDB expects UNIX seconds)
-      const updates = await client.getUpdates({
-        since: sinceSec,
-        type: args.entityType,
-        action: 'update',
-        page: currentPage,
-      });
+      const updates = await client
+        .getUpdates({
+          since: sinceSec,
+          type: args.entityType,
+          action: 'update',
+          page: currentPage,
+        })
+        .catch((err) => {
+          console.error('Error fetching updates:', err);
+          throw err;
+        });
 
       // Queue all updates from this page
       for (const update of updates.data) {
@@ -352,16 +357,16 @@ export const syncUpdates = internalAction({
       // Check if there are more pages
       const next = updates.links?.next;
       hasMore = !!(next && next !== '');
-      
+
       if (hasMore) {
         currentPage = parseInt(next!, 10);
         // Small delay between pages to avoid hammering the API
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
     // Update last incremental sync time (not full sync)
-    await ctx.runMutation(internal.tvdb.syncer.mutations.updateConfig, {
+    await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateConfig, {
       key: 'last_incremental_sync',
       value: Date.now(),
     });

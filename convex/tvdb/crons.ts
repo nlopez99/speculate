@@ -11,7 +11,7 @@ crons.hourly(
   'tvdb-incremental-updates',
   { minuteUTC: 0 },
   internal.tvdb.syncer.actions.syncUpdates,
-  { 
+  {
     // Sync updates from the last 2 hours (with overlap for safety)
     since: Date.now() - 2 * 60 * 60 * 1000,
   }
@@ -21,7 +21,7 @@ crons.hourly(
 crons.weekly(
   'tvdb-cleanup-raw-data',
   { dayOfWeek: 'sunday', hourUTC: 3, minuteUTC: 0 },
-  internal.tvdb.syncer.mutations.cleanupOldRawData
+  internal.tvdb.syncer.internalMutations.cleanupOldRawData
 );
 
 export default crons;

@@ -30,7 +30,7 @@ export const buildFullDatabase = internalAction({
 
     // Log the sync session
     const syncId = `full_sync_${Date.now()}`;
-    await ctx.runMutation(internal.tvdb.syncer.mutations.logSyncStart, {
+    await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncStart, {
       syncId,
       entityType: 'full_database',
       metadata: { startPage, batchSize },
@@ -53,7 +53,7 @@ export const buildFullDatabase = internalAction({
         message: `Full database sync initiated. Processing ${result.totalSeries} series across ${result.totalPages} pages.`,
       };
     } catch (error) {
-      await ctx.runMutation(internal.tvdb.syncer.mutations.logSyncError, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncError, {
         syncId,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
@@ -122,7 +122,7 @@ export const syncAllSeriesPage = internalAction({
 
         // Log progress every 100 series
         if (processed % 100 === 0) {
-          await ctx.runMutation(internal.tvdb.syncer.mutations.logSyncProgress, {
+          await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
             syncId: args.syncId,
             message: `Page ${args.page}: Processed ${processed} series (skipped ${skipped})`,
             metadata: {
@@ -152,7 +152,7 @@ export const syncAllSeriesPage = internalAction({
       });
     } else {
       // Mark sync as complete
-      await ctx.runMutation(internal.tvdb.syncer.mutations.logSyncComplete, {
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
         syncId: args.syncId,
         metadata: {
           totalPages: args.page + 1,
