@@ -772,7 +772,7 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
       runtimeMinutes: data.runtime ?? undefined,
       tvdbId: args.tvdbId,
       imdbId: data.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
-      stillUrl: data.image,
+      stillUrl: data.image ?? undefined,
       hasAired: data.aired ? new Date(data.aired) < new Date() : false,
       updatedAt: now,
     };
