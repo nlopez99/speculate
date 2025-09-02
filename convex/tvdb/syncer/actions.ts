@@ -46,18 +46,11 @@ export const syncSeries = internalAction({
         meta: 'translations',
       });
 
-      // Store raw data for audit/debugging
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawData, {
-        tvdbId: args.seriesId,
-        entityType: 'series',
-        data: JSON.stringify(seriesData.data),
-        version: 1,
-      });
-
-      // Upsert series data
-      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSeries, {
+      // Use batched mutation to store raw data and upsert series in a single transaction
+      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawDataAndUpsertSeries, {
         tvdbData: seriesData.data,
         tvdbId: args.seriesId,
+        rawData: JSON.stringify(seriesData.data),
       });
 
       // Sync related entities if not shallow
@@ -144,18 +137,11 @@ export const syncEpisode = internalAction({
       // Fetch episode data
       const episodeData = await client.getEpisodeExtended(parseInt(args.episodeId), 'translations');
 
-      // Store raw data
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawData, {
-        tvdbId: args.episodeId,
-        entityType: 'episode',
-        data: JSON.stringify(episodeData.data),
-        version: 1,
-      });
-
-      // Upsert episode data
-      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertEpisode, {
+      // Use batched mutation to store raw data and upsert episode in a single transaction
+      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawDataAndUpsertEpisode, {
         tvdbData: episodeData.data,
         tvdbId: args.episodeId,
+        rawData: JSON.stringify(episodeData.data),
       });
 
       // Check if parent series needs to be synced first
