@@ -92,6 +92,19 @@ export const shouldSyncEntity = internalQuery({
     entityId: v.string(),
   },
   handler: async (ctx, args) => {
+    // First check if entity actually exists in our database
+    const mapping = await ctx.db
+      .query('tvdbIdMapping')
+      .withIndex('tvdbId_type', (q) => 
+        q.eq('tvdbId', args.entityId).eq('tvdbType', args.entityType)
+      )
+      .first();
+
+    // If entity doesn't exist in our database, always sync it
+    if (!mapping) {
+      return true;
+    }
+
     const state = await ctx.db
       .query('tvdbSyncState')
       .withIndex('entityType_entityId', (q) =>
@@ -100,7 +113,7 @@ export const shouldSyncEntity = internalQuery({
       .first();
 
     if (!state) {
-      return true; // Never synced
+      return true; // Never synced (shouldn't happen if mapping exists, but be safe)
     }
 
     // Check if sync is enabled
