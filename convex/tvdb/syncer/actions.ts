@@ -152,36 +152,6 @@ export const syncEpisode = internalAction({
         }
       );
 
-      // Check if parent series needs to be synced first
-      if ((result as any).requiresParentSync && (result as any).parentSeriesId) {
-        // Queue the parent series sync with high priority
-        await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-          entityType: 'series',
-          entityId: (result as any).parentSeriesId,
-          priority: 1, // High priority
-          metadata: {
-            source: 'cascade',
-          },
-        });
-
-        // Re-queue this episode sync with lower priority
-        await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-          entityType: 'episode',
-          entityId: args.episodeId,
-          priority: 5, // Lower priority to run after series
-          metadata: {
-            source: 'cascade',
-          },
-        });
-
-        return {
-          success: true,
-          entityType: 'episode',
-          entityId: args.episodeId,
-          action: 'deferred',
-        };
-      }
-
       return {
         success: true,
         entityType: 'episode',
