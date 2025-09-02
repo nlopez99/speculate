@@ -716,19 +716,20 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
 
     let seasonId = seasonMapping?.convexId as Id<'seasons'> | undefined;
 
-    if (!seasonId && data.seasonNumber !== undefined) {
+    if (!seasonId) {
+      const seasonNum = (data.seasonNumber !== undefined && data.seasonNumber !== null) ? data.seasonNumber : 0;
       const existingSeason = await ctx.db
         .query('seasons')
         .withIndex('show_seasonNumber', (q) =>
-          q.eq('showId', showId).eq('seasonNumber', data.seasonNumber!)
+          q.eq('showId', showId).eq('seasonNumber', seasonNum)
         )
         .first();
 
       if (!existingSeason) {
         seasonId = await ctx.db.insert('seasons', {
           showId,
-          seasonNumber: data.seasonNumber,
-          title: `Season ${data.seasonNumber}`,
+          seasonNumber: seasonNum,
+          title: `Season ${seasonNum}`,
           tvdbId: data.seasons?.[0]?.id?.toString(),
           createdAt: now,
           updatedAt: now,
