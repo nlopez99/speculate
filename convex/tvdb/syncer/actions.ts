@@ -62,15 +62,26 @@ export const syncSeries = internalAction({
         await Promise.all(
           seriesData.data.seasons.map(async (season) => {
             if (season.id) {
-              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                entityType: 'season',
-                entityId: season.id.toString(),
-                priority: (args.options?.priority ?? 5) + 1,
-                metadata: {
-                  parentId: args.seriesId,
-                  seasonNumber: season.number,
-                },
+              // Check if season is already synced
+              const existingSeasonMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
+                tvdbId: season.id.toString(),
+                tvdbType: 'season',
               });
+
+              if (!existingSeasonMapping) {
+                // Season not synced yet, queue it
+                await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                  entityType: 'season',
+                  entityId: season.id.toString(),
+                  priority: (args.options?.priority ?? 5) + 1,
+                  metadata: {
+                    parentId: args.seriesId,
+                    seasonNumber: season.number,
+                  },
+                });
+              } else {
+                console.log(`[Sync] Skipping already synced season: ${season.id} - Season ${season.number}`);
+              }
             }
           })
         );
@@ -196,6 +207,23 @@ export const syncSeason = internalAction({
     const client = await getAuthenticatedClient(ctx);
 
     try {
+      // Check if we should sync (unless forced)
+      if (!args.options?.force) {
+        const shouldSync = await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
+          entityType: 'season',
+          entityId: args.seasonId,
+        });
+
+        if (!shouldSync) {
+          return {
+            success: true,
+            entityType: 'season',
+            entityId: args.seasonId,
+            action: 'skipped',
+          };
+        }
+      }
+
       // Fetch season data
       const seasonData = await client.getSeasonExtended(parseInt(args.seasonId));
 
@@ -218,16 +246,27 @@ export const syncSeason = internalAction({
         await Promise.all(
           seasonData.data.episodes.map(async (episode) => {
             if (episode.id) {
-              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                entityType: 'episode',
-                entityId: episode.id.toString(),
-                priority: (args.options?.priority ?? 5) + 1,
-                metadata: {
-                  parentId: args.seasonId,
-                  seasonNumber: episode.seasonNumber,
-                  episodeNumber: episode.number,
-                },
+              // Check if episode is already synced
+              const existingEpisodeMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
+                tvdbId: episode.id.toString(),
+                tvdbType: 'episode',
               });
+
+              if (!existingEpisodeMapping) {
+                // Episode not synced yet, queue it
+                await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                  entityType: 'episode',
+                  entityId: episode.id.toString(),
+                  priority: (args.options?.priority ?? 5) + 1,
+                  metadata: {
+                    parentId: args.seasonId,
+                    seasonNumber: episode.seasonNumber,
+                    episodeNumber: episode.number,
+                  },
+                });
+              } else {
+                console.log(`[Sync] Skipping already synced episode: ${episode.id} - S${episode.seasonNumber}E${episode.number}`);
+              }
             }
           })
         );
