@@ -37,7 +37,6 @@ export const buildFullDatabase = internalAction({
       const result = await ctx.runAction(internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
         page: startPage,
         syncId,
-        resumeFromId: args.resumeFromId,
       });
 
       return {
@@ -62,7 +61,6 @@ export const syncAllSeriesPage = internalAction({
   args: {
     page: v.number(),
     syncId: v.string(),
-    resumeFromId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     try {
@@ -94,72 +92,50 @@ export const syncAllSeriesPage = internalAction({
         page_size: links?.page_size,
       });
 
-      // Resume from a specific ID if provided (for recovery)
-      let startProcessing = !args.resumeFromId;
       let processed = 0;
       let skipped = 0;
 
-      for (const show of series) {
-        if (!startProcessing) {
-          if (show.id?.toString() === args.resumeFromId) {
-            startProcessing = true;
-          } else {
-            skipped++;
-            continue;
-          }
-        }
+      await Promise.all(
+        series.map(async (show) => {
+          if (!show.id) return;
 
-        if (!show.id) continue;
-
-        try {
-          // Check if this series is already synced or queued to avoid duplicates
-          const existingMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
-            tvdbId: show.id.toString(),
-            tvdbType: 'series',
-          });
-
-          if (existingMapping && !args.resumeFromId) {
-            // Skip if already mapped (unless we're resuming from a specific ID)
-            console.log(`[Full Sync] Skipping already synced series: ${show.id} - ${show.name}`);
-            skipped++;
-          } else {
-            // Queue the series for deep sync using workpool
-            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-              entityType: 'series',
-              entityId: show.id.toString(),
-              metadata: {
-                source: 'manual',
-              },
+          try {
+            // Check if this series is already synced or queued to avoid duplicates
+            const existingMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
+              tvdbId: show.id.toString(),
+              tvdbType: 'series',
             });
 
-            processed++;
-            console.log(`[Full Sync] Queued series ${processed}: ${show.id} - ${show.name}`);
-          }
+            if (existingMapping) {
+              // Skip if already mapped (unless we're resuming from a specific ID)
+              console.log(`[Full Sync] Skipping already synced series: ${show.id} - ${show.name}`);
+              skipped++;
+            } else {
+              // Queue the series for deep sync using workpool
+              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                entityType: 'series',
+                entityId: show.id.toString(),
+                shallow: false,
+                metadata: {
+                  source: 'manual',
+                },
+              });
 
-          // Log progress every 50 series (more frequent for debugging)
-          if ((processed + skipped) % 50 === 0) {
-            await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
-              syncId: args.syncId,
-              message: `Page ${args.page}: Processed ${processed} series (skipped ${skipped})`,
-              metadata: {
-                page: args.page,
-                processed,
-                skipped,
-                currentSeriesId: show.id.toString(),
-                currentSeriesName: show.name,
-              },
-            });
+              processed++;
+              console.log(`[Full Sync] Queued series ${processed}: ${show.id} - ${show.name}`);
+            }
+          } catch (error) {
+            console.error(`Failed to queue series ${show.id}: ${error}`);
+            // Continue with next series even if one fails
           }
-        } catch (error) {
-          console.error(`Failed to queue series ${show.id}: ${error}`);
-          // Continue with next series even if one fails
-        }
-      }
+        })
+      );
 
       // Log page completion
       console.log(
         `[Full Sync] Page ${args.page} complete: processed=${processed}, skipped=${skipped}, total=${processed + skipped}`
       );
+
       await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
         syncId: args.syncId,
         message: `Page ${args.page} complete: Processed ${processed} new series, skipped ${skipped} existing`,

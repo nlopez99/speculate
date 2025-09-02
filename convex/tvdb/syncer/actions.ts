@@ -47,28 +47,33 @@ export const syncSeries = internalAction({
       });
 
       // Use batched mutation to store raw data and upsert series in a single transaction
-      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawDataAndUpsertSeries, {
-        tvdbData: seriesData.data,
-        tvdbId: args.seriesId,
-        rawData: JSON.stringify(seriesData.data),
-      });
+      const result = await ctx.runMutation(
+        internal.tvdb.syncer.internalMutations.storeRawDataAndUpsertSeries,
+        {
+          tvdbData: seriesData.data,
+          tvdbId: args.seriesId,
+          rawData: JSON.stringify(seriesData.data),
+        }
+      );
 
       // Sync related entities if not shallow
       const relatedSyncs: SyncResult[] = [];
       if (!args.options?.shallow && seriesData.data.seasons) {
-        for (const season of seriesData.data.seasons) {
-          if (season.id) {
-            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-              entityType: 'season',
-              entityId: season.id.toString(),
-              priority: (args.options?.priority ?? 5) + 1,
-              metadata: {
-                parentId: args.seriesId,
-                seasonNumber: season.number,
-              },
-            });
-          }
-        }
+        await Promise.all(
+          seriesData.data.seasons.map(async (season) => {
+            if (season.id) {
+              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                entityType: 'season',
+                entityId: season.id.toString(),
+                priority: (args.options?.priority ?? 5) + 1,
+                metadata: {
+                  parentId: args.seriesId,
+                  seasonNumber: season.number,
+                },
+              });
+            }
+          })
+        );
       }
 
       return {
@@ -138,11 +143,14 @@ export const syncEpisode = internalAction({
       const episodeData = await client.getEpisodeExtended(parseInt(args.episodeId), 'translations');
 
       // Use batched mutation to store raw data and upsert episode in a single transaction
-      const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawDataAndUpsertEpisode, {
-        tvdbData: episodeData.data,
-        tvdbId: args.episodeId,
-        rawData: JSON.stringify(episodeData.data),
-      });
+      const result = await ctx.runMutation(
+        internal.tvdb.syncer.internalMutations.storeRawDataAndUpsertEpisode,
+        {
+          tvdbData: episodeData.data,
+          tvdbId: args.episodeId,
+          rawData: JSON.stringify(episodeData.data),
+        }
+      );
 
       // Check if parent series needs to be synced first
       if ((result as any).requiresParentSync && (result as any).parentSeriesId) {
@@ -237,20 +245,22 @@ export const syncSeason = internalAction({
 
       // Queue episodes if not shallow
       if (!args.options?.shallow && seasonData.data.episodes) {
-        for (const episode of seasonData.data.episodes) {
-          if (episode.id) {
-            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-              entityType: 'episode',
-              entityId: episode.id.toString(),
-              priority: (args.options?.priority ?? 5) + 1,
-              metadata: {
-                parentId: args.seasonId,
-                seasonNumber: episode.seasonNumber,
-                episodeNumber: episode.number,
-              },
-            });
-          }
-        }
+        await Promise.all(
+          seasonData.data.episodes.map(async (episode) => {
+            if (episode.id) {
+              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                entityType: 'episode',
+                entityId: episode.id.toString(),
+                priority: (args.options?.priority ?? 5) + 1,
+                metadata: {
+                  parentId: args.seasonId,
+                  seasonNumber: episode.seasonNumber,
+                  episodeNumber: episode.number,
+                },
+              });
+            }
+          })
+        );
       }
 
       return {
