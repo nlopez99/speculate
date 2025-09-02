@@ -413,7 +413,10 @@ export const searchShows = query({
     const searchQuery = args.query.toLowerCase();
 
     // Get all shows
-    let shows = await ctx.db.query('shows').collect();
+    let shows = await ctx.db
+      .query('shows')
+      .withSearchIndex('search_title', (q) => q.search('title', searchQuery))
+      .take(10);
 
     // Filter by status
     if (!args.includeEnded) {
@@ -421,25 +424,11 @@ export const searchShows = query({
     }
 
     // Search filter
-    shows = shows.filter(
-      (show) =>
-        show.title.toLowerCase().includes(searchQuery) ||
-        show.overview?.toLowerCase().includes(searchQuery) ||
-        show.genres?.some((g) => g.toLowerCase().includes(searchQuery))
-    );
+    shows = shows.filter((show) => show.genres?.some((g) => g.toLowerCase().includes(searchQuery)));
 
     // Score by relevance
     const scored = shows.map((show) => {
       let score = 0;
-
-      // Title match
-      if (show.title.toLowerCase() === searchQuery) {
-        score += 100;
-      } else if (show.title.toLowerCase().startsWith(searchQuery)) {
-        score += 50;
-      } else if (show.title.toLowerCase().includes(searchQuery)) {
-        score += 20;
-      }
 
       // Popularity boost
       score += (show.followersCount || 0) * 0.01;

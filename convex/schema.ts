@@ -586,7 +586,11 @@ export default defineSchema({
   shows: defineTable(showsValidator)
     .index('slug', ['slug'])
     .index('status', ['status'])
-    .index('tmdbId', ['tmdbId']),
+    .index('tmdbId', ['tmdbId'])
+    .searchIndex('search_title', {
+      searchField: 'title',
+      staged: false,
+    }),
 
   seasons: defineTable(seasonsValidator)
     .index('showId', ['showId'])

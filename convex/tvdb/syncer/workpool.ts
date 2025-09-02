@@ -60,6 +60,9 @@ export const enqueueSyncEntity = internalMutation({
     // Enqueue based on entity type
     let workId: WorkId;
     const options: RetryOption & EnqueueOptions = {
+      // Use a unique name to prevent duplicate work items for the same entity
+      // This ensures deduplication - if a work item with this name already exists,
+      // it won't create a duplicate
       name: `sync-${args.entityType}-${args.entityId}`,
 
       // Use priority to schedule execution (lower priority = run sooner)
@@ -72,6 +75,8 @@ export const enqueueSyncEntity = internalMutation({
         entityType: args.entityType,
         entityId: args.entityId,
         metadata: args.metadata,
+        force: args.force,
+        shallow: args.shallow,
       },
     };
 
