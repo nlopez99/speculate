@@ -232,6 +232,7 @@ export const syncSeason = internalAction({
           tvdbId: args.seasonId,
           entityType: 'season',
           data: JSON.stringify(seasonData.data),
+          version: 1,
         });
 
         // Upsert season
