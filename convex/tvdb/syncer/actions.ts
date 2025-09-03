@@ -60,39 +60,35 @@ export const syncSeries = internalAction({
       // ALWAYS check related entities if not shallow (even if series was skipped)
       const relatedSyncs: SyncResult[] = [];
       if (!args.options?.shallow && seriesData.data.seasons) {
-        await Promise.all(
-          seriesData.data.seasons.map(async (season) => {
-            if (season.id) {
-              // Check if season needs syncing
-              const shouldSyncSeason =
-                args.options?.force ||
-                (await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
-                  entityType: 'season',
-                  entityId: season.id.toString(),
-                }));
+        for (const season of seriesData.data.seasons) {
+          if (season.id) {
+            // Check if season needs syncing
+            const shouldSyncSeason =
+              args.options?.force ||
+              (await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
+                entityType: 'season',
+                entityId: season.id.toString(),
+              }));
 
-              if (shouldSyncSeason) {
-                // Season needs syncing, queue it
-                await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                  entityType: 'season',
-                  entityId: season.id.toString(),
-                  priority: (args.options?.priority ?? 5) + 1,
-                  metadata: {
-                    parentId: args.seriesId,
-                    seasonNumber: season.number,
-                  },
-                });
-                console.log(
-                  `[Sync] Queued season for sync: ${season.id} - Season ${season.number}`
-                );
-              } else {
-                console.log(
-                  `[Sync] Skipping season: ${season.id} - Season ${season.number} - recently synced`
-                );
-              }
+            if (shouldSyncSeason) {
+              // Season needs syncing, queue it
+              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                entityType: 'season',
+                entityId: season.id.toString(),
+                metadata: {
+                  parentId: args.seriesId,
+                  seasonNumber: season.number,
+                },
+              });
+
+              console.log(`[Sync] Queued season for sync: ${season.id} - Season ${season.number}`);
+            } else {
+              console.log(
+                `[Sync] Skipping season: ${season.id} - Season ${season.number} - recently synced`
+              );
             }
-          })
-        );
+          }
+        }
       }
 
       return {
@@ -236,7 +232,6 @@ export const syncSeason = internalAction({
           tvdbId: args.seasonId,
           entityType: 'season',
           data: JSON.stringify(seasonData.data),
-          version: 1,
         });
 
         // Upsert season
@@ -252,40 +247,38 @@ export const syncSeason = internalAction({
 
       // ALWAYS check episodes if not shallow (even if season was skipped)
       if (!args.options?.shallow && seasonData.data.episodes) {
-        await Promise.all(
-          seasonData.data.episodes.map(async (episode) => {
-            if (episode.id) {
-              // Check if episode needs syncing
-              const shouldSyncEpisode =
-                args.options?.force ||
-                (await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
-                  entityType: 'episode',
-                  entityId: episode.id.toString(),
-                }));
+        for (const episode of seasonData.data.episodes) {
+          if (episode.id) {
+            // Check if episode needs syncing
+            const shouldSyncEpisode =
+              args.options?.force ||
+              (await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
+                entityType: 'episode',
+                entityId: episode.id.toString(),
+              }));
 
-              if (shouldSyncEpisode) {
-                // Episode needs syncing, queue it
-                await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                  entityType: 'episode',
-                  entityId: episode.id.toString(),
-                  priority: (args.options?.priority ?? 5) + 1,
-                  metadata: {
-                    parentId: args.seasonId,
-                    seasonNumber: episode.seasonNumber,
-                    episodeNumber: episode.number,
-                  },
-                });
-                console.log(
-                  `[Sync] Queued episode for sync: ${episode.id} - S${episode.seasonNumber}E${episode.number}`
-                );
-              } else {
-                console.log(
-                  `[Sync] Skipping episode: ${episode.id} - S${episode.seasonNumber}E${episode.number} - recently synced`
-                );
-              }
+            if (shouldSyncEpisode) {
+              // Episode needs syncing, queue it
+              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+                entityType: 'episode',
+                entityId: episode.id.toString(),
+                priority: (args.options?.priority ?? 5) + 1,
+                metadata: {
+                  parentId: args.seasonId,
+                  seasonNumber: episode.seasonNumber,
+                  episodeNumber: episode.number,
+                },
+              });
+              console.log(
+                `[Sync] Queued episode for sync: ${episode.id} - S${episode.seasonNumber}E${episode.number}`
+              );
+            } else {
+              console.log(
+                `[Sync] Skipping episode: ${episode.id} - S${episode.seasonNumber}E${episode.number} - recently synced`
+              );
             }
-          })
-        );
+          }
+        }
       }
 
       return {

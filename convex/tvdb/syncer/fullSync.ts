@@ -100,30 +100,18 @@ export const syncAllSeriesPage = internalAction({
           if (!show.id) return;
 
           try {
-            // Check if this series is already synced or queued to avoid duplicates
-            const existingMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
-              tvdbId: show.id.toString(),
-              tvdbType: 'series',
+            // Queue the series for deep sync using workpool
+            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+              entityType: 'series',
+              entityId: show.id.toString(),
+              shallow: false,
+              metadata: {
+                source: 'manual',
+              },
             });
 
-            if (existingMapping) {
-              // Skip if already mapped (unless we're resuming from a specific ID)
-              console.log(`[Full Sync] Skipping already synced series: ${show.id} - ${show.name}`);
-              skipped++;
-            } else {
-              // Queue the series for deep sync using workpool
-              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                entityType: 'series',
-                entityId: show.id.toString(),
-                shallow: false,
-                metadata: {
-                  source: 'manual',
-                },
-              });
-
-              processed++;
-              console.log(`[Full Sync] Queued series ${processed}: ${show.id} - ${show.name}`);
-            }
+            processed++;
+            console.log(`[Full Sync] Queued series ${processed}: ${show.id} - ${show.name}`);
           } catch (error) {
             console.error(`Failed to queue series ${show.id}: ${error}`);
             // Continue with next series even if one fails

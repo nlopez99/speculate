@@ -124,12 +124,3 @@ export interface TVDBUpdateRecord {
   timeStamp: number;
   method: 'create' | 'update' | 'delete';
 }
-
-export interface TVDBSyncBatch {
-  seriesIds: string[];
-  seasonIds: string[];
-  episodeIds: string[];
-  movieIds: string[];
-  peopleIds: string[];
-  companyIds: string[];
-}
