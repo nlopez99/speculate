@@ -7,21 +7,14 @@ const crons = cronJobs();
 // No need for a separate queue processing cron
 
 // Check for updates every hour
-crons.hourly(
-  'tvdb-incremental-updates',
-  { minuteUTC: 0 },
-  internal.tvdb.syncer.actions.syncUpdates,
-  {
-    // Sync updates from the last 2 hours (with overlap for safety)
-    since: Date.now() - 2 * 60 * 60 * 1000,
-  }
-);
-
-// Clean up old raw data weekly
-crons.weekly(
-  'tvdb-cleanup-raw-data',
-  { dayOfWeek: 'sunday', hourUTC: 3, minuteUTC: 0 },
-  internal.tvdb.syncer.internalMutations.cleanupOldRawData
-);
+// crons.hourly(
+//   'tvdb-incremental-updates',
+//   { minuteUTC: 0 },
+//   internal.tvdb.syncer.actions.syncUpdates,
+//   {
+//     // Sync updates from the last 2 hours (with overlap for safety)
+//     since: Date.now() - 2 * 60 * 60 * 1000,
+//   }
+// );
 
 export default crons;

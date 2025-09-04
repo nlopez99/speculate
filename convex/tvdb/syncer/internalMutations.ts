@@ -481,30 +481,6 @@ export const updateSyncState = internalMutation({
 });
 
 // ============================================================================
-// Raw Data Storage
-// ============================================================================
-
-export const storeRawData = internalMutation({
-  args: {
-    tvdbId: v.string(),
-    entityType: v.string(),
-    data: v.string(),
-    version: v.number(),
-  },
-  handler: async (ctx, args) => {
-    // Store raw TVDB response for debugging/audit
-    await ctx.db.insert('tvdbRawData', {
-      tvdbId: args.tvdbId,
-      entityType: args.entityType,
-      data: args.data,
-      version: args.version,
-      fetchedAt: Date.now(),
-      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-  },
-});
-
-// ============================================================================
 // Config Management
 // ============================================================================
 
@@ -555,16 +531,6 @@ export const storeRawDataAndUpsertSeries = internalMutation({
     rawData: v.string(),
   },
   handler: async (ctx, args) => {
-    // Store raw data
-    await ctx.db.insert('tvdbRawData', {
-      tvdbId: args.tvdbId,
-      entityType: 'series',
-      data: args.rawData,
-      version: 1,
-      fetchedAt: Date.now(),
-      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
     // Upsert series (inline the logic from upsertSeries)
     const data = args.tvdbData as SeriesExtendedRecord;
     const now = Date.now();
@@ -671,16 +637,6 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
     rawData: v.string(),
   },
   handler: async (ctx, args) => {
-    // Store raw data
-    await ctx.db.insert('tvdbRawData', {
-      tvdbId: args.tvdbId,
-      entityType: 'episode',
-      data: args.rawData,
-      version: 1,
-      fetchedAt: Date.now(),
-      expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
     // Upsert episode (inline logic from upsertEpisode)
     const data = args.tvdbData as EpisodeExtendedRecord;
     const now = Date.now();
@@ -717,12 +673,11 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
     let seasonId = seasonMapping?.convexId as Id<'seasons'> | undefined;
 
     if (!seasonId) {
-      const seasonNum = (data.seasonNumber !== undefined && data.seasonNumber !== null) ? data.seasonNumber : 0;
+      const seasonNum =
+        data.seasonNumber !== undefined && data.seasonNumber !== null ? data.seasonNumber : 0;
       const existingSeason = await ctx.db
         .query('seasons')
-        .withIndex('show_seasonNumber', (q) =>
-          q.eq('showId', showId).eq('seasonNumber', seasonNum)
-        )
+        .withIndex('show_seasonNumber', (q) => q.eq('showId', showId).eq('seasonNumber', seasonNum))
         .first();
 
       if (!existingSeason) {
@@ -836,28 +791,6 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
     }
 
     return { created, episodeId, changes };
-  },
-});
-
-// ============================================================================
-// Cleanup Mutations
-// ============================================================================
-
-export const cleanupOldRawData = internalMutation({
-  handler: async (ctx) => {
-    const now = Date.now();
-    const oldData = await ctx.db
-      .query('tvdbRawData')
-      .filter((q) => q.lt(q.field('expiresAt'), now))
-      .collect();
-
-    let deleted = 0;
-    for (const item of oldData) {
-      await ctx.db.delete(item._id);
-      deleted++;
-    }
-
-    return { deleted };
   },
 });
 

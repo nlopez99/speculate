@@ -5,7 +5,6 @@ import {
   tvdbSyncStateValidator,
   tvdbIdMappingValidator,
   tvdbSyncLogValidator,
-  tvdbRawDataValidator,
   tvdbSyncConfigValidator,
 } from './tvdb/syncer/schema';
 
@@ -775,10 +774,6 @@ export default defineSchema({
     .index('syncId', ['syncId'])
     .index('entityType_entityId', ['entityType', 'entityId'])
     .index('status', ['status']),
-
-  tvdbRawData: defineTable(tvdbRawDataValidator)
-    .index('tvdbId', ['tvdbId'])
-    .index('expiresAt', ['expiresAt']),
 
   tvdbSyncConfig: defineTable(tvdbSyncConfigValidator).index('key', ['key']),
 });

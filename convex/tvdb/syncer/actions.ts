@@ -227,14 +227,6 @@ export const syncSeason = internalAction({
 
       // Only update season if needed
       if (shouldSyncSeason) {
-        // Store raw data
-        await ctx.runMutation(internal.tvdb.syncer.internalMutations.storeRawData, {
-          tvdbId: args.seasonId,
-          entityType: 'season',
-          data: JSON.stringify(seasonData.data),
-          version: 1,
-        });
-
         // Upsert season
         const result = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSeason, {
           tvdbData: seasonData.data,
