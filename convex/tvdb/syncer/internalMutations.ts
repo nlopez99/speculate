@@ -90,29 +90,6 @@ export const upsertSeries = internalMutation({
       });
     }
 
-    // Update sync state (upsert)
-    const existingState = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', 'series').eq('entityId', args.tvdbId)
-      )
-      .first();
-
-    const syncStateData = {
-      entityType: 'series' as const,
-      entityId: args.tvdbId,
-      lastSyncedAt: now,
-      lastModifiedAt: data.lastUpdated ? new Date(data.lastUpdated).getTime() : undefined,
-      version: (existingState?.version ?? 0) + 1,
-      status: 'synced' as const,
-    };
-
-    if (existingState) {
-      await ctx.db.patch(existingState._id, syncStateData);
-    } else {
-      await ctx.db.insert('tvdbSyncState', syncStateData);
-    }
-
     return { created, showId, changes };
   },
 });
@@ -248,28 +225,14 @@ export const upsertEpisode = internalMutation({
       changes.added.push('episode');
     }
 
-    // Update sync state (upsert)
-    const existingState = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', 'episode').eq('entityId', args.tvdbId)
-      )
-      .first();
-
     const syncStateData = {
       entityType: 'episode' as const,
       entityId: args.tvdbId,
       lastSyncedAt: now,
       lastModifiedAt: data.lastUpdated ? new Date(data.lastUpdated).getTime() : undefined,
-      version: (existingState?.version ?? 0) + 1,
+      version: 1,
       status: 'synced' as const,
     };
-
-    if (existingState) {
-      await ctx.db.patch(existingState._id, syncStateData);
-    } else {
-      await ctx.db.insert('tvdbSyncState', syncStateData);
-    }
 
     return { created, episodeId, changes };
   },
@@ -337,28 +300,14 @@ export const upsertSeason = internalMutation({
       changes.added.push('season');
     }
 
-    // Update sync state (upsert)
-    const existingState = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', 'season').eq('entityId', args.tvdbId)
-      )
-      .first();
-
     const syncStateData = {
       entityType: 'season' as const,
       entityId: args.tvdbId,
       lastSyncedAt: now,
       lastModifiedAt: data.lastUpdated ? new Date(data.lastUpdated).getTime() : undefined,
-      version: (existingState?.version ?? 0) + 1,
+      version: 1,
       status: 'synced' as const,
     };
-
-    if (existingState) {
-      await ctx.db.patch(existingState._id, syncStateData);
-    } else {
-      await ctx.db.insert('tvdbSyncState', syncStateData);
-    }
 
     return { created, seasonId, changes };
   },
@@ -421,62 +370,6 @@ export const storeAuthToken = internalMutation({
     }
 
     return { success: true };
-  },
-});
-
-export const updateSyncState = internalMutation({
-  args: {
-    entityType: v.union(
-      v.literal('series'),
-      v.literal('season'),
-      v.literal('episode'),
-      v.literal('movie'),
-      v.literal('person'),
-      v.literal('company')
-    ),
-    entityId: v.string(),
-    status: v.union(
-      v.literal('synced'),
-      v.literal('pending'),
-      v.literal('failed'),
-      v.literal('conflict')
-    ),
-    errorMessage: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q
-          .eq(
-            'entityType',
-            args.entityType as 'series' | 'season' | 'episode' | 'movie' | 'person' | 'company'
-          )
-          .eq('entityId', args.entityId)
-      )
-      .first();
-
-    const data = {
-      entityType: args.entityType as
-        | 'series'
-        | 'season'
-        | 'episode'
-        | 'movie'
-        | 'person'
-        | 'company',
-      entityId: args.entityId,
-      lastSyncedAt: Date.now(),
-      status: args.status,
-      errorMessage: args.errorMessage,
-      retryCount: args.status === 'failed' ? (existing?.retryCount || 0) + 1 : 0,
-      version: (existing?.version || 0) + 1,
-    };
-
-    if (existing) {
-      await ctx.db.patch(existing._id, data);
-    } else {
-      await ctx.db.insert('tvdbSyncState', data);
-    }
   },
 });
 
@@ -601,31 +494,6 @@ export const storeRawDataAndUpsertSeries = internalMutation({
       });
     }
 
-    // Update sync state
-    const existingState = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', 'series').eq('entityId', args.tvdbId)
-      )
-      .first();
-
-    if (existingState) {
-      await ctx.db.patch(existingState._id, {
-        lastSyncedAt: now,
-        status: 'synced',
-        errorMessage: undefined,
-        retryCount: 0,
-      });
-    } else {
-      await ctx.db.insert('tvdbSyncState', {
-        entityType: 'series',
-        entityId: args.tvdbId,
-        lastSyncedAt: now,
-        version: 1,
-        status: 'synced',
-      });
-    }
-
     return { created, showId, changes };
   },
 });
@@ -637,7 +505,6 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
     rawData: v.string(),
   },
   handler: async (ctx, args) => {
-    // Upsert episode (inline logic from upsertEpisode)
     const data = args.tvdbData as EpisodeExtendedRecord;
     const now = Date.now();
 
@@ -762,31 +629,6 @@ export const storeRawDataAndUpsertEpisode = internalMutation({
         imdbId: episodeData.imdbId,
         createdAt: now,
         updatedAt: now,
-      });
-    }
-
-    // Update sync state
-    const existingState = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', 'episode').eq('entityId', args.tvdbId)
-      )
-      .first();
-
-    if (existingState) {
-      await ctx.db.patch(existingState._id, {
-        lastSyncedAt: now,
-        status: 'synced',
-        errorMessage: undefined,
-        retryCount: 0,
-      });
-    } else {
-      await ctx.db.insert('tvdbSyncState', {
-        entityType: 'episode',
-        entityId: args.tvdbId,
-        lastSyncedAt: now,
-        version: 1,
-        status: 'synced',
       });
     }
 

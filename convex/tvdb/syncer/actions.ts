@@ -100,22 +100,12 @@ export const syncSeries = internalAction({
         relatedSyncs,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-      // Log failure
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncState, {
-        entityType: 'series',
-        entityId: args.seriesId,
-        status: 'failed',
-        errorMessage,
-      });
-
       return {
         success: false,
         entityType: 'series',
         entityId: args.seriesId,
         action: 'failed',
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   },
@@ -175,21 +165,12 @@ export const syncEpisode = internalAction({
         changes: result.changes,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncState, {
-        entityType: 'episode',
-        entityId: args.episodeId,
-        status: 'failed',
-        errorMessage,
-      });
-
       return {
         success: false,
         entityType: 'episode',
         entityId: args.episodeId,
         action: 'failed',
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   },
@@ -282,21 +263,12 @@ export const syncSeason = internalAction({
         changes: seasonChanges,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncState, {
-        entityType: 'season',
-        entityId: args.seasonId,
-        status: 'failed',
-        errorMessage,
-      });
-
       return {
         success: false,
         entityType: 'season',
         entityId: args.seasonId,
         action: 'failed',
-        error: errorMessage,
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   },

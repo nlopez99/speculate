@@ -1,7 +1,6 @@
 import { internalQuery, query } from '../../_generated/server';
 import { v } from 'convex/values';
 import { paginationOptsValidator } from 'convex/server';
-import { tvdbSyncStateValidator } from './schema';
 
 // ============================================================================
 // Config Queries
@@ -95,25 +94,14 @@ export const shouldSyncEntity = internalQuery({
     // First check if entity actually exists in our database
     const mapping = await ctx.db
       .query('tvdbIdMapping')
-      .withIndex('tvdbId_type', (q) => 
+      .withIndex('tvdbId_type', (q) =>
         q.eq('tvdbId', args.entityId).eq('tvdbType', args.entityType)
       )
       .first();
 
-    // If entity doesn't exist in our database, always sync it
-    if (!mapping) {
-      return true;
-    }
-
-    const state = await ctx.db
-      .query('tvdbSyncState')
-      .withIndex('entityType_entityId', (q) =>
-        q.eq('entityType', args.entityType).eq('entityId', args.entityId)
-      )
-      .first();
-
-    if (!state) {
-      return true; // Never synced (shouldn't happen if mapping exists, but be safe)
+    // If entity exist in our database, don't sync it
+    if (mapping) {
+      return false;
     }
 
     // Check if sync is enabled
@@ -126,55 +114,7 @@ export const shouldSyncEntity = internalQuery({
       return false;
     }
 
-    // Skip if recently synced (within last hour by default)
-    const syncIntervalHours = await ctx.db
-      .query('tvdbSyncConfig')
-      .withIndex('key', (q) => q.eq('key', 'sync_interval_hours'))
-      .first();
-
-    const intervalMs = ((syncIntervalHours?.value as number) || 1) * 60 * 60 * 1000;
-    const timeSinceLastSync = Date.now() - state.lastSyncedAt;
-
-    return timeSinceLastSync > intervalMs;
-  },
-});
-
-export const getSyncState = query({
-  args: {
-    entityType: v.optional(
-      v.union(
-        v.literal('series'),
-        v.literal('season'),
-        v.literal('episode'),
-        v.literal('movie'),
-        v.literal('person'),
-        v.literal('company')
-      )
-    ),
-    status: v.optional(tvdbSyncStateValidator.fields.status),
-    paginationOpts: paginationOptsValidator,
-  },
-  handler: async (ctx, args) => {
-    // Use indexes for filtering when available
-    if (args.status !== undefined) {
-      return await ctx.db
-        .query('tvdbSyncState')
-        .withIndex('status', (q) => q.eq('status', args.status!))
-        .order('desc')
-        .paginate(args.paginationOpts);
-    } else if (args.entityType) {
-      // Filter by entity type without index (less common case)
-      return await ctx.db
-        .query('tvdbSyncState')
-        .filter((q) => q.eq(q.field('entityType'), args.entityType))
-        .order('desc')
-        .paginate(args.paginationOpts);
-    } else {
-      return await ctx.db
-        .query('tvdbSyncState')
-        .order('desc')
-        .paginate(args.paginationOpts);
-    }
+    return true;
   },
 });
 
@@ -271,74 +211,6 @@ export const getSyncProgress = query({
           error: l.error,
           timestamp: l.startedAt,
         })),
-    };
-  },
-});
-
-// ============================================================================
-// Stats Queries
-// ============================================================================
-
-export const getSyncStats = query({
-  handler: async (ctx) => {
-    // Use aggregation with pagination to avoid unbounded collect
-    const stats = {
-      total: 0,
-      synced: 0,
-      failed: 0,
-      pending: 0,
-      conflict: 0,
-      byEntityType: {} as Record<string, number>,
-      lastSyncTimes: {} as Record<string, number>,
-    };
-
-    // Process in batches
-    const BATCH_SIZE = 1000;
-    let cursor = null;
-
-    do {
-      const batch = await ctx.db.query('tvdbSyncState').paginate({ numItems: BATCH_SIZE, cursor });
-
-      for (const state of batch.page) {
-        stats.total++;
-
-        // Count by status
-        if (state.status === 'synced') stats.synced++;
-        else if (state.status === 'failed') stats.failed++;
-        else if (state.status === 'pending') stats.pending++;
-        else if (state.status === 'conflict') stats.conflict++;
-
-        // Group by entity type
-        stats.byEntityType[state.entityType] = (stats.byEntityType[state.entityType] || 0) + 1;
-
-        // Track last sync times
-        if (
-          !stats.lastSyncTimes[state.entityType] ||
-          state.lastSyncedAt > stats.lastSyncTimes[state.entityType]
-        ) {
-          stats.lastSyncTimes[state.entityType] = state.lastSyncedAt;
-        }
-      }
-
-      cursor = batch.continueCursor;
-    } while (cursor);
-
-    // Get config
-    const lastFullSync = await ctx.db
-      .query('tvdbSyncConfig')
-      .withIndex('key', (q) => q.eq('key', 'last_full_sync'))
-      .first();
-
-    return {
-      ...stats,
-      // Queue stats removed - workpool manages its own queue
-      queue: {
-        total: 0,
-        ready: 0,
-        pending: 0,
-        failed: 0,
-      },
-      lastFullSync: lastFullSync?.value as number | undefined,
     };
   },
 });

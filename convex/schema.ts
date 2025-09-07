@@ -2,7 +2,6 @@ import { defineSchema, defineTable } from 'convex/server';
 import { authTables } from '@convex-dev/auth/server';
 import { Infer, v } from 'convex/values';
 import {
-  tvdbSyncStateValidator,
   tvdbIdMappingValidator,
   tvdbSyncLogValidator,
   tvdbSyncConfigValidator,
@@ -759,11 +758,6 @@ export default defineSchema({
   ]),
 
   episodeStats: defineTable(episodeStatsValidator).index('episodeId', ['episodeId']),
-
-  // TVDB Sync Tables
-  tvdbSyncState: defineTable(tvdbSyncStateValidator)
-    .index('entityType_entityId', ['entityType', 'entityId'])
-    .index('status', ['status']),
 
   tvdbIdMapping: defineTable(tvdbIdMappingValidator)
     .index('tvdbId_type', ['tvdbId', 'tvdbType'])
