@@ -97,24 +97,18 @@ export const syncAllSeriesPage = internalAction({
 
       await Promise.all(
         series.map(async (show) => {
-          if (!show.id) return;
+          const showId = show?.id?.toString();
+          if (!showId) return;
 
           try {
-            // Queue the series for deep sync using workpool
-            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-              entityType: 'series',
-              entityId: show.id.toString(),
-              shallow: false,
-              metadata: {
-                source: 'manual',
-              },
+            await ctx.scheduler.runAfter(0, internal.tvdb.syncer.actions.syncSeries, {
+              seriesId: showId,
             });
 
             processed++;
-            console.log(`[Full Sync] Queued series ${processed}: ${show.id} - ${show.name}`);
+            console.log(`[Full Sync] Queued series ${processed}: ${showId} - ${show.name}`);
           } catch (error) {
-            console.error(`Failed to queue series ${show.id}: ${error}`);
-            // Continue with next series even if one fails
+            console.error(`Failed to queue series ${showId}: ${error}`);
           }
         })
       );

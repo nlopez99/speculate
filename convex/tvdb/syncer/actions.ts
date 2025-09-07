@@ -215,29 +215,24 @@ export const syncSeason = internalAction({
       // ALWAYS check episodes if not shallow (even if season was skipped)
       if (!args.options?.shallow && seasonData.data.episodes) {
         for (const episode of seasonData.data.episodes) {
-          if (episode.id) {
+          const episodeId = episode?.id?.toString();
+          if (episodeId) {
             // Check if episode needs syncing
             const shouldSyncEpisode =
               args.options?.force ||
               (await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
                 entityType: 'episode',
-                entityId: episode.id.toString(),
+                entityId: episodeId,
               }));
 
             if (shouldSyncEpisode) {
               // Episode needs syncing, queue it
-              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                entityType: 'episode',
-                entityId: episode.id.toString(),
-                priority: (args.options?.priority ?? 5) + 1,
-                metadata: {
-                  parentId: args.seasonId,
-                  seasonNumber: episode.seasonNumber,
-                  episodeNumber: episode.number,
-                },
+              await ctx.scheduler.runAfter(0, internal.tvdb.syncer.actions.syncEpisode, {
+                episodeId,
               });
+
               console.log(
-                `[Sync] Queued episode for sync: ${episode.id} - S${episode.seasonNumber}E${episode.number}`
+                `[Sync] Syncing episode: ${episode.id} - S${episode.seasonNumber}E${episode.number}`
               );
             } else {
               console.log(
@@ -271,81 +266,81 @@ export const syncSeason = internalAction({
 // Batch Sync Actions
 // ============================================================================
 
-export const syncUpdates = internalAction({
-  args: {
-    since: v.number(), // Unix timestamp
-    entityType: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    // Get authenticated client (reuses existing token)
-    const client = await getAuthenticatedClient(ctx);
+// export const syncUpdates = internalAction({
+//   args: {
+//     since: v.number(), // Unix timestamp
+//     entityType: v.optional(v.string()),
+//   },
+//   handler: async (ctx, args) => {
+//     // Get authenticated client (reuses existing token)
+//     const client = await getAuthenticatedClient(ctx);
 
-    const results = [];
-    let currentPage = 0;
-    let hasMore = true;
-    const sinceSec = Math.floor(args.since / 1000); // Convert ms to seconds
+//     const results = [];
+//     let currentPage = 0;
+//     let hasMore = true;
+//     const sinceSec = Math.floor(args.since / 1000); // Convert ms to seconds
 
-    // Process all pages of updates
-    while (hasMore) {
-      // Get updates from TVDB (TVDB expects UNIX seconds)
-      const updates = await client
-        .getUpdates({
-          since: sinceSec,
-          type: args.entityType,
-          action: 'update',
-          page: currentPage,
-        })
-        .catch((err) => {
-          console.error('Error fetching updates:', err);
-          throw err;
-        });
+//     // Process all pages of updates
+//     while (hasMore) {
+//       // Get updates from TVDB (TVDB expects UNIX seconds)
+//       const updates = await client
+//         .getUpdates({
+//           since: sinceSec,
+//           type: args.entityType,
+//           action: 'update',
+//           page: currentPage,
+//         })
+//         .catch((err) => {
+//           console.error('Error fetching updates:', err);
+//           throw err;
+//         });
 
-      // Queue all updates from this page
-      for (const update of updates.data) {
-        if (update.entityType && update.recordId) {
-          const entityType = mapTVDBEntityType(update.entityType);
-          if (entityType) {
-            await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-              entityType,
-              entityId: update.recordId.toString(),
-              priority: 3, // Medium priority for updates
-              metadata: {
-                source: 'webhook',
-              },
-            });
+//       // Queue all updates from this page
+//       for (const update of updates.data) {
+//         if (update.entityType && update.recordId) {
+//           const entityType = mapTVDBEntityType(update.entityType);
+//           if (entityType) {
+//             await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
+//               entityType,
+//               entityId: update.recordId.toString(),
+//               priority: 3, // Medium priority for updates
+//               metadata: {
+//                 source: 'webhook',
+//               },
+//             });
 
-            results.push({
-              entityType,
-              entityId: update.recordId.toString(),
-              queued: true,
-            });
-          }
-        }
-      }
+//             results.push({
+//               entityType,
+//               entityId: update.recordId.toString(),
+//               queued: true,
+//             });
+//           }
+//         }
+//       }
 
-      // Check if there are more pages
-      const next = updates.links?.next;
-      hasMore = !!(next && next !== '');
+//       // Check if there are more pages
+//       const next = updates.links?.next;
+//       hasMore = !!(next && next !== '');
 
-      if (hasMore) {
-        currentPage = parseInt(next!, 10);
-        // Small delay between pages to avoid hammering the API
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
+//       if (hasMore) {
+//         currentPage = parseInt(next!, 10);
+//         // Small delay between pages to avoid hammering the API
+//         await new Promise((resolve) => setTimeout(resolve, 100));
+//       }
+//     }
 
-    // Update last incremental sync time (not full sync)
-    await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateConfig, {
-      key: 'last_incremental_sync',
-      value: Date.now(),
-    });
+//     // Update last incremental sync time (not full sync)
+//     await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateConfig, {
+//       key: 'last_incremental_sync',
+//       value: Date.now(),
+//     });
 
-    return {
-      processed: results.length,
-      results,
-    };
-  },
-});
+//     return {
+//       processed: results.length,
+//       results,
+//     };
+//   },
+// });
 
 // ============================================================================
 // Process Queue Action - DEPRECATED

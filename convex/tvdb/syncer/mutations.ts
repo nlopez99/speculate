@@ -65,34 +65,6 @@ export const startFullDatabaseSync = mutation({
 });
 
 /**
- * Queue a specific series for syncing using workpool
- */
-export const queueSeriesSync = mutation({
-  args: {
-    tvdbSeriesId: v.string(),
-    deep: v.optional(v.boolean()), // Whether to sync all seasons/episodes
-    priority: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    // Queue sync using workpool
-    await ctx.scheduler.runAfter(0, internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-      entityType: 'series',
-      entityId: args.tvdbSeriesId,
-      priority: args.priority ?? 5,
-      shallow: args.deep === false,
-      metadata: {
-        source: 'manual',
-      },
-    });
-
-    return {
-      success: true,
-      message: `Series ${args.tvdbSeriesId} queued for syncing`,
-    };
-  },
-});
-
-/**
  * Enable or disable sync processing
  */
 export const setSyncEnabled = mutation({
