@@ -57,28 +57,21 @@ export const syncSeries = internalAction({
         console.log(`[Sync] Skipping series update: ${args.seriesId} - recently synced`);
       }
 
-      // ALWAYS check related entities if not shallow (even if series was skipped)
       const relatedSyncs: SyncResult[] = [];
       if (!args.options?.shallow && seriesData.data.seasons) {
         for (const season of seriesData.data.seasons) {
-          if (season.id) {
-            // Check if season needs syncing
+          const seasonId = season.id?.toString();
+          if (seasonId) {
             const shouldSyncSeason =
               args.options?.force ||
               (await ctx.runQuery(internal.tvdb.syncer.queries.shouldSyncEntity, {
                 entityType: 'season',
-                entityId: season.id.toString(),
+                entityId: seasonId,
               }));
 
             if (shouldSyncSeason) {
-              // Season needs syncing, queue it
-              await ctx.runMutation(internal.tvdb.syncer.workpool.enqueueSyncEntity, {
-                entityType: 'season',
-                entityId: season.id.toString(),
-                metadata: {
-                  parentId: args.seriesId,
-                  seasonNumber: season.number,
-                },
+              await ctx.scheduler.runAfter(0, internal.tvdb.syncer.actions.syncSeason, {
+                seasonId,
               });
 
               console.log(`[Sync] Queued season for sync: ${season.id} - Season ${season.number}`);

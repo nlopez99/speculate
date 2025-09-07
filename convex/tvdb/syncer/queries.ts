@@ -239,20 +239,3 @@ export const searchMappings = query({
       .paginate(args.paginationOpts);
   },
 });
-
-// ============================================================================
-// Sync Log Queries
-// ============================================================================
-
-export const getSyncLogs = internalQuery({
-  args: {
-    syncId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query('tvdbSyncLog')
-      .withIndex('syncId', (q) => q.eq('syncId', args.syncId))
-      .order('asc')
-      .collect();
-  },
-});
