@@ -62,14 +62,14 @@ export const syncAllSeriesPage = internalAction({
         const response = await client.getAllSeries(page);
 
         if (!response.data || response.data.length === 0) {
-          console.log(`[Full Sync] No data returned for page ${args.page}`);
+          console.log(`[Full Sync] No data returned for page ${page}`);
           return;
         }
 
         const series = response.data;
         const links = response.links;
 
-        console.log(`[Full Sync] Page ${args.page}: Found ${series.length} series. Links:`, {
+        console.log(`[Full Sync] Page ${page}: Found ${series.length} series. Links:`, {
           next: links?.next,
           last: links?.last,
           total_items: links?.total_items,
@@ -113,14 +113,14 @@ export const syncAllSeriesPage = internalAction({
 
         // Log page completion
         console.log(
-          `[Full Sync] Page ${args.page} complete: processed=${processed}, skipped=${skipped}, total=${processed + skipped}`
+          `[Full Sync] Page ${page} complete: processed=${processed}, skipped=${skipped}, total=${processed + skipped}`
         );
 
         await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
           syncId: args.syncId,
-          message: `Page ${args.page} complete: Processed ${processed} new series, skipped ${skipped} existing`,
+          message: `Page ${page} complete: Processed ${processed} new series, skipped ${skipped} existing`,
           metadata: {
-            page: args.page,
+            page: page,
             processed,
             skipped,
           },
@@ -129,12 +129,14 @@ export const syncAllSeriesPage = internalAction({
         // Process next page if available
         hasNextPage = links?.next !== undefined && links.next !== null;
 
-        if (!hasNextPage) {
+        if (hasNextPage) {
+          page++;
+        } else {
           await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
             syncId: args.syncId,
             metadata: {
-              totalPages: args.page + 1,
-              totalSeries: links?.total_items || args.page + 1,
+              totalPages: page + 1,
+              totalSeries: links?.total_items || page + 1,
             },
           });
         }
