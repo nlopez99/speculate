@@ -14,7 +14,7 @@ import { RegisteredAction } from 'convex/server';
 // New Optimized Sync Actions
 // ============================================================================
 
-export const syncSeriesDeep = action({
+export const syncSeriesDeep = internalAction({
   args: {
     seriesId: v.string(),
     options: v.optional(
