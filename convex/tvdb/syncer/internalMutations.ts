@@ -776,14 +776,16 @@ export const bulkUpsertSeriesBundle = internalMutation({
       .first();
 
     let showId: Id<'shows'>;
-    
+
     const showData = {
       title: seriesData.name || '',
       slug: seriesData.slug || seriesIdStr,
       overview: seriesData.overview,
       posterUrl: seriesData.image || undefined,
       backdropUrl: seriesData.artworks?.[0]?.image || undefined,
-      firstAirYear: seriesData.firstAired ? new Date(seriesData.firstAired).getFullYear() : undefined,
+      firstAirYear: seriesData.firstAired
+        ? new Date(seriesData.firstAired).getFullYear()
+        : undefined,
       status: mapSeriesStatus(seriesData.status?.name),
       tvdbId: seriesIdStr,
       tmdbId: seriesData.remoteIds?.find((r) => r.sourceName === 'TheMovieDB')?.id,
@@ -804,22 +806,6 @@ export const bulkUpsertSeriesBundle = internalMutation({
         if (hasChanges) {
           await ctx.db.patch(showId, showData);
           updated.series = true;
-        }
-        
-        // Update tvdbIdMapping if tmdbId, imdbId, or slug changed
-        const mappingChanges = (
-          existingMapping.tmdbId !== showData.tmdbId ||
-          existingMapping.imdbId !== showData.imdbId ||
-          existingMapping.slug !== showData.slug
-        );
-        
-        if (mappingChanges) {
-          await ctx.db.patch(existingMapping._id, {
-            tmdbId: showData.tmdbId,
-            imdbId: showData.imdbId,
-            slug: showData.slug,
-            updatedAt: now,
-          });
         }
       }
     } else {
@@ -849,9 +835,7 @@ export const bulkUpsertSeriesBundle = internalMutation({
       .withIndex('showId', (q) => q.eq('showId', showId))
       .collect();
 
-    const seasonsByNumber = new Map(
-      existingSeasons.map(s => [s.seasonNumber, s])
-    );
+    const seasonsByNumber = new Map(existingSeasons.map((s) => [s.seasonNumber, s]));
 
     // Prefetch all episodes for this show
     const existingEpisodes = await ctx.db
@@ -860,7 +844,7 @@ export const bulkUpsertSeriesBundle = internalMutation({
       .collect();
 
     const episodesByKey = new Map(
-      existingEpisodes.map(e => [`${e.seasonNumber}-${e.episodeNumber}`, e])
+      existingEpisodes.map((e) => [`${e.seasonNumber}-${e.episodeNumber}`, e])
     );
 
     // 3. Upsert seasons
@@ -870,7 +854,7 @@ export const bulkUpsertSeriesBundle = internalMutation({
     for (const seasonData of seasonsData) {
       const seasonTvdbId = seasonData.id?.toString() || '';
       const seasonNumber = seasonData.number || 0;
-      
+
       let existingSeason = seasonsByNumber.get(seasonNumber);
       let seasonId: Id<'seasons'>;
 
@@ -905,9 +889,7 @@ export const bulkUpsertSeriesBundle = internalMutation({
         if (seasonTvdbId) {
           const existingSeasonMapping = await ctx.db
             .query('tvdbIdMapping')
-            .withIndex('tvdbId_type', (q) => 
-              q.eq('tvdbId', seasonTvdbId).eq('tvdbType', 'season')
-            )
+            .withIndex('tvdbId_type', (q) => q.eq('tvdbId', seasonTvdbId).eq('tvdbType', 'season'))
             .first();
 
           if (!existingSeasonMapping) {
@@ -936,14 +918,14 @@ export const bulkUpsertSeriesBundle = internalMutation({
       const seasonId = seasonIdMapping.get(seasonIdStr);
       if (!seasonId) continue;
 
-      const season = seasonsData.find(s => s.id?.toString() === seasonIdStr);
+      const season = seasonsData.find((s) => s.id?.toString() === seasonIdStr);
       const seasonNumber = season?.number || 0;
 
       for (const episodeData of episodes) {
         const episodeTvdbId = episodeData.id?.toString() || '';
         const episodeNumber = episodeData.number || 0;
         const episodeKey = `${seasonNumber}-${episodeNumber}`;
-        
+
         let existingEpisode = episodesByKey.get(episodeKey);
         episodeCount++;
 
@@ -956,8 +938,8 @@ export const bulkUpsertSeriesBundle = internalMutation({
           overview: episodeData.translations?.overviewTranslations?.[0]?.overview,
           airDateUtc: episodeData.aired
             ? new Date(
-                /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired) 
-                  ? `${episodeData.aired}T00:00:00Z` 
+                /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired)
+                  ? `${episodeData.aired}T00:00:00Z`
                   : episodeData.aired
               ).getTime()
             : undefined,
@@ -989,7 +971,7 @@ export const bulkUpsertSeriesBundle = internalMutation({
           if (episodeTvdbId) {
             const existingEpisodeMapping = await ctx.db
               .query('tvdbIdMapping')
-              .withIndex('tvdbId_type', (q) => 
+              .withIndex('tvdbId_type', (q) =>
                 q.eq('tvdbId', episodeTvdbId).eq('tvdbType', 'episode')
               )
               .first();
@@ -1020,7 +1002,9 @@ export const bulkUpsertSeriesBundle = internalMutation({
     if (syncState) {
       await ctx.db.patch(syncState._id, {
         lastSyncedAt: now,
-        tvdbLastUpdated: seriesData.lastUpdated ? new Date(seriesData.lastUpdated).getTime() : undefined,
+        tvdbLastUpdated: seriesData.lastUpdated
+          ? new Date(seriesData.lastUpdated).getTime()
+          : undefined,
         syncVersion: 2, // Version 2 = bulk sync
       });
     } else {
@@ -1028,7 +1012,9 @@ export const bulkUpsertSeriesBundle = internalMutation({
         entityType: 'series',
         entityId: seriesIdStr,
         lastSyncedAt: now,
-        tvdbLastUpdated: seriesData.lastUpdated ? new Date(seriesData.lastUpdated).getTime() : undefined,
+        tvdbLastUpdated: seriesData.lastUpdated
+          ? new Date(seriesData.lastUpdated).getTime()
+          : undefined,
         syncVersion: 2,
       });
     }
@@ -1066,14 +1052,12 @@ export const bulkUpsertEpisodes = internalMutation({
       .withIndex('seasonId', (q) => q.eq('seasonId', args.seasonId))
       .collect();
 
-    const episodesByNumber = new Map(
-      existingEpisodes.map(e => [e.episodeNumber, e])
-    );
+    const episodesByNumber = new Map(existingEpisodes.map((e) => [e.episodeNumber, e]));
 
     for (const episodeData of episodesData) {
       const episodeTvdbId = episodeData.id?.toString() || '';
       const episodeNumber = episodeData.number || 0;
-      
+
       let existingEpisode = episodesByNumber.get(episodeNumber);
 
       const episodeDataToSave = {
@@ -1085,8 +1069,8 @@ export const bulkUpsertEpisodes = internalMutation({
         overview: episodeData.translations?.overviewTranslations?.[0]?.overview,
         airDateUtc: episodeData.aired
           ? new Date(
-              /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired) 
-                ? `${episodeData.aired}T00:00:00Z` 
+              /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired)
+                ? `${episodeData.aired}T00:00:00Z`
                 : episodeData.aired
             ).getTime()
           : undefined,
@@ -1149,10 +1133,8 @@ export const upsertSyncJob = internalMutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('syncJobs')
-      .withIndex('entity', (q) => 
-        q.eq('entityType', args.entityType)
-         .eq('entityId', args.entityId)
-         .eq('status', 'running')
+      .withIndex('entity', (q) =>
+        q.eq('entityType', args.entityType).eq('entityId', args.entityId).eq('status', 'running')
       )
       .first();
 
@@ -1198,10 +1180,8 @@ export const updateSyncJob = internalMutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query('syncJobs')
-      .withIndex('entity', (q) => 
-        q.eq('entityType', args.entityType)
-         .eq('entityId', args.entityId)
-         .eq('status', 'running')
+      .withIndex('entity', (q) =>
+        q.eq('entityType', args.entityType).eq('entityId', args.entityId).eq('status', 'running')
       )
       .first();
 

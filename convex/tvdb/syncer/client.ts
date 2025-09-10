@@ -1,12 +1,12 @@
 import { TVDBClient } from '../client/api';
-import { ActionCtx } from '../../_generated/server';
+import { ActionCtx, MutationCtx } from '../../_generated/server';
 import { internal } from '../../_generated/api';
 
 /**
  * Get or create an authenticated TVDB client instance.
  * Uses stored tokens from the database to avoid unnecessary login calls.
  */
-export async function getAuthenticatedClient(ctx: ActionCtx): Promise<TVDBClient> {
+export async function getAuthenticatedClient(ctx: ActionCtx | MutationCtx): Promise<TVDBClient> {
   const apiKey = process.env.TVDB_API_KEY;
 
   if (!apiKey) {

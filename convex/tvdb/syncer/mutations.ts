@@ -135,11 +135,7 @@ export const syncSeriesById = mutation({
  */
 export const getSyncStatus = query({
   args: {
-    entityType: v.union(
-      v.literal('series'),
-      v.literal('season'),
-      v.literal('episode')
-    ),
+    entityType: v.union(v.literal('series'), v.literal('season'), v.literal('episode')),
     entityId: v.string(),
   },
   returns: v.union(
@@ -149,20 +145,20 @@ export const getSyncStatus = query({
       tvdbLastUpdated: v.optional(v.number()),
       syncVersion: v.number(),
       hoursSinceSync: v.number(),
-      currentJobs: v.array(v.object({
-        status: v.string(),
-        startedAt: v.optional(v.number()),
-        error: v.optional(v.string()),
-      })),
+      currentJobs: v.array(
+        v.object({
+          status: v.string(),
+          startedAt: v.optional(v.number()),
+          error: v.optional(v.string()),
+        })
+      ),
     })
   ),
   handler: async (ctx, args) => {
     // Get sync state
     const syncState = await ctx.db
       .query('tvdbSyncState')
-      .withIndex('entity', (q) => 
-        q.eq('entityType', args.entityType).eq('entityId', args.entityId)
-      )
+      .withIndex('entity', (q) => q.eq('entityType', args.entityType).eq('entityId', args.entityId))
       .first();
 
     if (!syncState) {
@@ -172,19 +168,15 @@ export const getSyncStatus = query({
     // Get current sync jobs
     const jobs = await ctx.db
       .query('syncJobs')
-      .withIndex('entity', (q) => 
-        q.eq('entityType', args.entityType)
-         .eq('entityId', args.entityId)
-         .eq('status', 'running')
+      .withIndex('entity', (q) =>
+        q.eq('entityType', args.entityType).eq('entityId', args.entityId).eq('status', 'running')
       )
       .collect();
 
     const pendingJobs = await ctx.db
       .query('syncJobs')
-      .withIndex('entity', (q) => 
-        q.eq('entityType', args.entityType)
-         .eq('entityId', args.entityId)
-         .eq('status', 'pending')
+      .withIndex('entity', (q) =>
+        q.eq('entityType', args.entityType).eq('entityId', args.entityId).eq('status', 'pending')
       )
       .collect();
 
@@ -193,7 +185,7 @@ export const getSyncStatus = query({
       tvdbLastUpdated: syncState.tvdbLastUpdated,
       syncVersion: syncState.syncVersion,
       hoursSinceSync: (Date.now() - syncState.lastSyncedAt) / (1000 * 60 * 60),
-      currentJobs: [...jobs, ...pendingJobs].map(job => ({
+      currentJobs: [...jobs, ...pendingJobs].map((job) => ({
         status: job.status,
         startedAt: job.startedAt,
         error: job.error,
