@@ -733,6 +733,491 @@ export const logSyncError = internalMutation({
 });
 
 // ============================================================================
+// Bulk Upsert Mutations
+// ============================================================================
+
+export const bulkUpsertSeriesBundle = internalMutation({
+  args: {
+    series: v.any(), // SeriesExtendedRecord
+    seasons: v.array(v.any()), // SeasonExtendedRecord[]
+    episodesBySeason: v.record(v.string(), v.array(v.any())), // Record<seasonId, EpisodeExtendedRecord[]>
+    syncTTLHours: v.optional(v.number()), // TTL for sync state
+  },
+  returns: v.object({
+    seriesId: v.id('shows'),
+    seasonIds: v.array(v.id('seasons')),
+    episodeCount: v.number(),
+    created: v.object({
+      series: v.boolean(),
+      seasons: v.number(),
+      episodes: v.number(),
+    }),
+    updated: v.object({
+      series: v.boolean(),
+      seasons: v.number(),
+      episodes: v.number(),
+    }),
+  }),
+  handler: async (ctx, args) => {
+    const seriesData = args.series as SeriesExtendedRecord;
+    const seasonsData = args.seasons as SeasonExtendedRecord[];
+    const episodesBySeason = args.episodesBySeason as Record<string, EpisodeExtendedRecord[]>;
+    const syncTTLHours = args.syncTTLHours ?? 24; // Default 24 hour TTL
+    const now = Date.now();
+
+    const created = { series: false, seasons: 0, episodes: 0 };
+    const updated = { series: false, seasons: 0, episodes: 0 };
+
+    // 1. Upsert Series
+    const seriesIdStr = seriesData.id?.toString() || '';
+    let existingMapping = await ctx.db
+      .query('tvdbIdMapping')
+      .withIndex('tvdbId_type', (q) => q.eq('tvdbId', seriesIdStr).eq('tvdbType', 'series'))
+      .first();
+
+    let showId: Id<'shows'>;
+    
+    const showData = {
+      title: seriesData.name || '',
+      slug: seriesData.slug || seriesIdStr,
+      overview: seriesData.overview,
+      posterUrl: seriesData.image || undefined,
+      backdropUrl: seriesData.artworks?.[0]?.image || undefined,
+      firstAirYear: seriesData.firstAired ? new Date(seriesData.firstAired).getFullYear() : undefined,
+      status: mapSeriesStatus(seriesData.status?.name),
+      tvdbId: seriesIdStr,
+      tmdbId: seriesData.remoteIds?.find((r) => r.sourceName === 'TheMovieDB')?.id,
+      imdbId: seriesData.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
+      network: seriesData.originalNetwork?.name,
+      genres: seriesData.genres?.map((g) => g.name || '').filter(Boolean),
+      updatedAt: now,
+    };
+
+    if (existingMapping?.convexId) {
+      showId = existingMapping.convexId as Id<'shows'>;
+      const existing = await ctx.db.get(showId);
+      if (existing) {
+        // Only update if data has changed
+        const hasChanges = Object.entries(showData).some(
+          ([key, value]) => existing[key as keyof typeof existing] !== value
+        );
+        if (hasChanges) {
+          await ctx.db.patch(showId, showData);
+          updated.series = true;
+        }
+        
+        // Update tvdbIdMapping if tmdbId, imdbId, or slug changed
+        const mappingChanges = (
+          existingMapping.tmdbId !== showData.tmdbId ||
+          existingMapping.imdbId !== showData.imdbId ||
+          existingMapping.slug !== showData.slug
+        );
+        
+        if (mappingChanges) {
+          await ctx.db.patch(existingMapping._id, {
+            tmdbId: showData.tmdbId,
+            imdbId: showData.imdbId,
+            slug: showData.slug,
+            updatedAt: now,
+          });
+        }
+      }
+    } else {
+      created.series = true;
+      showId = await ctx.db.insert('shows', {
+        ...showData,
+        followersCount: 0,
+        predictionsCount: 0,
+        createdAt: now,
+      });
+
+      await ctx.db.insert('tvdbIdMapping', {
+        tvdbId: seriesIdStr,
+        tvdbType: 'series',
+        convexId: showId,
+        tmdbId: showData.tmdbId,
+        imdbId: showData.imdbId,
+        slug: showData.slug,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    // 2. Prefetch existing seasons and episodes for efficient bulk update
+    const existingSeasons = await ctx.db
+      .query('seasons')
+      .withIndex('showId', (q) => q.eq('showId', showId))
+      .collect();
+
+    const seasonsByNumber = new Map(
+      existingSeasons.map(s => [s.seasonNumber, s])
+    );
+
+    // Prefetch all episodes for this show
+    const existingEpisodes = await ctx.db
+      .query('episodes')
+      .withIndex('showId', (q) => q.eq('showId', showId))
+      .collect();
+
+    const episodesByKey = new Map(
+      existingEpisodes.map(e => [`${e.seasonNumber}-${e.episodeNumber}`, e])
+    );
+
+    // 3. Upsert seasons
+    const seasonIds: Id<'seasons'>[] = [];
+    const seasonIdMapping = new Map<string, Id<'seasons'>>();
+
+    for (const seasonData of seasonsData) {
+      const seasonTvdbId = seasonData.id?.toString() || '';
+      const seasonNumber = seasonData.number || 0;
+      
+      let existingSeason = seasonsByNumber.get(seasonNumber);
+      let seasonId: Id<'seasons'>;
+
+      const seasonDataToSave = {
+        showId,
+        seasonNumber,
+        title: seasonData.name,
+        tvdbId: seasonTvdbId,
+        posterUrl: seasonData.image || undefined,
+        episodeCount: seasonData.episodes?.length,
+        updatedAt: now,
+      };
+
+      if (existingSeason) {
+        seasonId = existingSeason._id;
+        // Only update if data has changed
+        const hasChanges = Object.entries(seasonDataToSave).some(
+          ([key, value]) => existingSeason![key as keyof typeof existingSeason] !== value
+        );
+        if (hasChanges) {
+          await ctx.db.patch(seasonId, seasonDataToSave);
+          updated.seasons++;
+        }
+      } else {
+        seasonId = await ctx.db.insert('seasons', {
+          ...seasonDataToSave,
+          createdAt: now,
+        });
+        created.seasons++;
+
+        // Create tvdbIdMapping for season if it has a TVDB ID
+        if (seasonTvdbId) {
+          const existingSeasonMapping = await ctx.db
+            .query('tvdbIdMapping')
+            .withIndex('tvdbId_type', (q) => 
+              q.eq('tvdbId', seasonTvdbId).eq('tvdbType', 'season')
+            )
+            .first();
+
+          if (!existingSeasonMapping) {
+            await ctx.db.insert('tvdbIdMapping', {
+              tvdbId: seasonTvdbId,
+              tvdbType: 'season',
+              convexId: seasonId,
+              tmdbId: undefined,
+              imdbId: undefined,
+              slug: undefined,
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
+      }
+
+      seasonIds.push(seasonId);
+      seasonIdMapping.set(seasonTvdbId, seasonId);
+    }
+
+    // 4. Bulk upsert episodes
+    let episodeCount = 0;
+
+    for (const [seasonIdStr, episodes] of Object.entries(episodesBySeason)) {
+      const seasonId = seasonIdMapping.get(seasonIdStr);
+      if (!seasonId) continue;
+
+      const season = seasonsData.find(s => s.id?.toString() === seasonIdStr);
+      const seasonNumber = season?.number || 0;
+
+      for (const episodeData of episodes) {
+        const episodeTvdbId = episodeData.id?.toString() || '';
+        const episodeNumber = episodeData.number || 0;
+        const episodeKey = `${seasonNumber}-${episodeNumber}`;
+        
+        let existingEpisode = episodesByKey.get(episodeKey);
+        episodeCount++;
+
+        const episodeDataToSave = {
+          showId,
+          seasonId,
+          seasonNumber,
+          episodeNumber,
+          title: episodeData.name || `Episode ${episodeNumber}`,
+          overview: episodeData.translations?.overviewTranslations?.[0]?.overview,
+          airDateUtc: episodeData.aired
+            ? new Date(
+                /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired) 
+                  ? `${episodeData.aired}T00:00:00Z` 
+                  : episodeData.aired
+              ).getTime()
+            : undefined,
+          runtimeMinutes: episodeData.runtime || undefined,
+          tvdbId: episodeTvdbId,
+          imdbId: episodeData.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
+          stillUrl: episodeData.image || undefined,
+          hasAired: episodeData.aired ? new Date(episodeData.aired) <= new Date() : false,
+          updatedAt: now,
+        };
+
+        if (existingEpisode) {
+          // Only update if data has changed
+          const hasChanges = Object.entries(episodeDataToSave).some(
+            ([key, value]) => existingEpisode![key as keyof typeof existingEpisode] !== value
+          );
+          if (hasChanges) {
+            await ctx.db.patch(existingEpisode._id, episodeDataToSave);
+            updated.episodes++;
+          }
+        } else {
+          const newEpisodeId = await ctx.db.insert('episodes', {
+            ...episodeDataToSave,
+            createdAt: now,
+          });
+          created.episodes++;
+
+          // Create tvdbIdMapping for episode if it has a TVDB ID
+          if (episodeTvdbId) {
+            const existingEpisodeMapping = await ctx.db
+              .query('tvdbIdMapping')
+              .withIndex('tvdbId_type', (q) => 
+                q.eq('tvdbId', episodeTvdbId).eq('tvdbType', 'episode')
+              )
+              .first();
+
+            if (!existingEpisodeMapping) {
+              await ctx.db.insert('tvdbIdMapping', {
+                tvdbId: episodeTvdbId,
+                tvdbType: 'episode',
+                convexId: newEpisodeId, // Now correctly using the new episode ID
+                tmdbId: undefined,
+                imdbId: episodeDataToSave.imdbId,
+                slug: undefined,
+                createdAt: now,
+                updatedAt: now,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 5. Update sync state
+    const syncState = await ctx.db
+      .query('tvdbSyncState')
+      .withIndex('entity', (q) => q.eq('entityType', 'series').eq('entityId', seriesIdStr))
+      .first();
+
+    if (syncState) {
+      await ctx.db.patch(syncState._id, {
+        lastSyncedAt: now,
+        tvdbLastUpdated: seriesData.lastUpdated ? new Date(seriesData.lastUpdated).getTime() : undefined,
+        syncVersion: 2, // Version 2 = bulk sync
+      });
+    } else {
+      await ctx.db.insert('tvdbSyncState', {
+        entityType: 'series',
+        entityId: seriesIdStr,
+        lastSyncedAt: now,
+        tvdbLastUpdated: seriesData.lastUpdated ? new Date(seriesData.lastUpdated).getTime() : undefined,
+        syncVersion: 2,
+      });
+    }
+
+    return {
+      seriesId: showId,
+      seasonIds,
+      episodeCount,
+      created,
+      updated,
+    };
+  },
+});
+
+export const bulkUpsertEpisodes = internalMutation({
+  args: {
+    showId: v.id('shows'),
+    seasonId: v.id('seasons'),
+    seasonNumber: v.number(),
+    episodes: v.array(v.any()), // EpisodeExtendedRecord[]
+  },
+  returns: v.object({
+    created: v.number(),
+    updated: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const episodesData = args.episodes as EpisodeExtendedRecord[];
+    const now = Date.now();
+    const created = { count: 0 };
+    const updated = { count: 0 };
+
+    // Prefetch existing episodes for this season
+    const existingEpisodes = await ctx.db
+      .query('episodes')
+      .withIndex('seasonId', (q) => q.eq('seasonId', args.seasonId))
+      .collect();
+
+    const episodesByNumber = new Map(
+      existingEpisodes.map(e => [e.episodeNumber, e])
+    );
+
+    for (const episodeData of episodesData) {
+      const episodeTvdbId = episodeData.id?.toString() || '';
+      const episodeNumber = episodeData.number || 0;
+      
+      let existingEpisode = episodesByNumber.get(episodeNumber);
+
+      const episodeDataToSave = {
+        showId: args.showId,
+        seasonId: args.seasonId,
+        seasonNumber: args.seasonNumber,
+        episodeNumber,
+        title: episodeData.name || `Episode ${episodeNumber}`,
+        overview: episodeData.translations?.overviewTranslations?.[0]?.overview,
+        airDateUtc: episodeData.aired
+          ? new Date(
+              /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired) 
+                ? `${episodeData.aired}T00:00:00Z` 
+                : episodeData.aired
+            ).getTime()
+          : undefined,
+        runtimeMinutes: episodeData.runtime || undefined,
+        tvdbId: episodeTvdbId,
+        imdbId: episodeData.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
+        stillUrl: episodeData.image || undefined,
+        hasAired: episodeData.aired ? new Date(episodeData.aired) <= new Date() : false,
+        updatedAt: now,
+      };
+
+      if (existingEpisode) {
+        // Only update if data has changed
+        const hasChanges = Object.entries(episodeDataToSave).some(
+          ([key, value]) => existingEpisode![key as keyof typeof existingEpisode] !== value
+        );
+        if (hasChanges) {
+          await ctx.db.patch(existingEpisode._id, episodeDataToSave);
+          updated.count++;
+        }
+      } else {
+        await ctx.db.insert('episodes', {
+          ...episodeDataToSave,
+          createdAt: now,
+        });
+        created.count++;
+      }
+    }
+
+    return {
+      created: created.count,
+      updated: updated.count,
+    };
+  },
+});
+
+// ============================================================================
+// Sync Job Management
+// ============================================================================
+
+export const upsertSyncJob = internalMutation({
+  args: {
+    entityType: v.union(
+      v.literal('series'),
+      v.literal('season'),
+      v.literal('episode'),
+      v.literal('fullSync')
+    ),
+    entityId: v.string(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('failed')
+    ),
+    startedAt: v.optional(v.number()),
+    priority: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('syncJobs')
+      .withIndex('entity', (q) => 
+        q.eq('entityType', args.entityType)
+         .eq('entityId', args.entityId)
+         .eq('status', 'running')
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        status: args.status,
+        startedAt: args.startedAt,
+      });
+    } else {
+      await ctx.db.insert('syncJobs', {
+        entityType: args.entityType,
+        entityId: args.entityId,
+        status: args.status,
+        priority: args.priority,
+        startedAt: args.startedAt,
+        retryCount: 0,
+      });
+    }
+    return null;
+  },
+});
+
+export const updateSyncJob = internalMutation({
+  args: {
+    entityType: v.union(
+      v.literal('series'),
+      v.literal('season'),
+      v.literal('episode'),
+      v.literal('fullSync')
+    ),
+    entityId: v.string(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('running'),
+      v.literal('completed'),
+      v.literal('failed')
+    ),
+    completedAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('syncJobs')
+      .withIndex('entity', (q) => 
+        q.eq('entityType', args.entityType)
+         .eq('entityId', args.entityId)
+         .eq('status', 'running')
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        status: args.status,
+        completedAt: args.completedAt,
+        error: args.error,
+        metadata: args.metadata,
+      });
+    }
+    return null;
+  },
+});
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 

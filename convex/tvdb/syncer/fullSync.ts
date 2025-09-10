@@ -48,101 +48,134 @@ export const syncAllSeriesPage = internalAction({
   args: {
     page: v.number(),
     syncId: v.string(),
+    maxConcurrentSyncs: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<void> => {
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const maxConcurrent = args.maxConcurrentSyncs ?? 10;
+
     try {
       // Get authenticated client (reuses existing token)
       const client = await getAuthenticatedClient(ctx);
 
-      // Get series for this page
-      let hasNextPage = true;
-      let page = args.page;
-      while (hasNextPage) {
-        console.log(`[Full Sync] Fetching page ${page} from TVDB API`);
-        const response = await client.getAllSeries(page);
+      console.log(`[Full Sync] Fetching page ${args.page} from TVDB API`);
+      const response = await client.getAllSeries(args.page);
 
-        if (!response.data || response.data.length === 0) {
-          console.log(`[Full Sync] No data returned for page ${page}`);
-          return;
-        }
-
-        const series = response.data;
-        const links = response.links;
-
-        console.log(`[Full Sync] Page ${page}: Found ${series.length} series. Links:`, {
-          next: links?.next,
-          last: links?.last,
-          total_items: links?.total_items,
-          page_size: links?.page_size,
+      if (!response.data || response.data.length === 0) {
+        console.log(`[Full Sync] No data returned for page ${args.page}`);
+        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
+          syncId: args.syncId,
+          metadata: {
+            totalPages: args.page,
+            totalSeries: 0,
+          },
         });
+        return null;
+      }
 
-        let processed = 0;
-        let skipped = 0;
-        const BATCH_SIZE = 5; // Process 5 series at a time to limit concurrency
-        const BATCH_DELAY_MS = 100; // Small delay between batches
+      const series = response.data;
+      const links = response.links;
 
-        // Process series in batches to avoid overwhelming the database
-        for (let i = 0; i < series.length; i += BATCH_SIZE) {
-          const batch = series.slice(i, i + BATCH_SIZE);
+      console.log(`[Full Sync] Page ${args.page}: Found ${series.length} series. Links:`, {
+        next: links?.next,
+        last: links?.last,
+        total_items: links?.total_items,
+        page_size: links?.page_size,
+      });
 
-          // Process each batch with limited concurrency
-          await Promise.all(
-            batch.map(async (show) => {
-              const showId = show?.id?.toString();
-              if (!showId) return;
+      let processed = 0;
+      let failed = 0;
 
-              try {
-                // Stagger the scheduling slightly within the batch
-                const delay = (i % BATCH_SIZE) * 50;
-                await ctx.scheduler.runAfter(delay, internal.tvdb.syncer.actions.syncSeries, {
-                  seriesId: showId,
-                });
+      // Process series in batches with the new syncSeriesDeep
+      for (let i = 0; i < series.length; i += maxConcurrent) {
+        const batch = series.slice(i, i + maxConcurrent);
 
-                processed++;
-              } catch (error) {
-                console.error(`Failed to queue series ${showId}: ${error}`);
-              }
-            })
-          );
+        // Schedule batch with staggered delays
+        for (let j = 0; j < batch.length; j++) {
+          const show = batch[j];
+          const showId = show?.id?.toString();
+          if (!showId) continue;
 
-          // Add a small delay between batches to prevent connection pool exhaustion
-          if (i + BATCH_SIZE < series.length) {
-            await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+          try {
+            // Schedule with a small stagger to avoid burst scheduling
+            const delay = j * 50; // 50ms between each series in batch
+            await ctx.scheduler.runAfter(delay, internal.tvdb.syncer.actions.syncSeriesDeep, {
+              seriesId: showId,
+              options: {
+                syncTTLHours: 24, // Default TTL for full sync
+                maxConcurrentSeasons: 3, // Limit concurrency within each series
+              },
+            });
+            processed++;
+          } catch (error) {
+            console.error(`[Full Sync] Failed to schedule series ${showId}:`, error);
+            failed++;
           }
         }
 
-        // Log page completion
-        console.log(
-          `[Full Sync] Page ${page} complete: processed=${processed}, skipped=${skipped}, total=${processed + skipped}`
-        );
+        // Small delay between batches to avoid rate limiting
+        if (i + maxConcurrent < series.length) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
 
-        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
+        // Log progress periodically
+        if ((i + maxConcurrent) % 50 === 0 || i + maxConcurrent >= series.length) {
+          console.log(
+            `[Full Sync] Page ${args.page} progress: ${i + Math.min(maxConcurrent, series.length - i)}/${series.length} series`
+          );
+        }
+      }
+
+      // Log page completion
+      console.log(
+        `[Full Sync] Page ${args.page} complete: processed=${processed}, failed=${failed}, total=${series.length}`
+      );
+
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
+        syncId: args.syncId,
+        message: `Page ${args.page} complete: Processed ${processed} series, ${failed} failed`,
+        metadata: {
+          page: args.page,
+          processed,
+          skipped: 0,
+        },
+      });
+
+      // Schedule next page if available
+      const hasNextPage = links?.next !== undefined && links.next !== null;
+
+      if (hasNextPage) {
+        // Schedule the next page as a separate action to avoid long-running actions
+        await ctx.scheduler.runAfter(100, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
+          page: args.page + 1,
           syncId: args.syncId,
-          message: `Page ${page} complete: Processed ${processed} new series, skipped ${skipped} existing`,
+          maxConcurrentSyncs: maxConcurrent,
+        });
+
+        console.log(`[Full Sync] Scheduled page ${args.page + 1}`);
+      } else {
+        // Complete the sync
+        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
+          syncId: args.syncId,
           metadata: {
-            page: page,
-            processed,
-            skipped,
+            totalPages: args.page + 1,
+            totalSeries: links?.total_items || (args.page + 1) * series.length,
           },
         });
 
-        // Process next page if available
-        hasNextPage = links?.next !== undefined && links.next !== null;
-
-        if (hasNextPage) {
-          page++;
-        } else {
-          await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
-            syncId: args.syncId,
-            metadata: {
-              totalPages: page + 1,
-              totalSeries: links?.total_items || page + 1,
-            },
-          });
-        }
+        console.log(
+          `[Full Sync] Completed all pages. Total series: ${links?.total_items || 'unknown'}`
+        );
       }
+
+      return null;
     } catch (err) {
-      console.log(err);
+      console.error(`[Full Sync] Error on page ${args.page}:`, err);
+
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncError, {
+        syncId: args.syncId,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
 
       throw err;
     }

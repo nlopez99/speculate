@@ -125,6 +125,45 @@ export const shouldSyncEntity = internalQuery({
 // The workpool component handles its own queue management
 
 // ============================================================================
+// Sync State Queries
+// ============================================================================
+
+export const getSyncState = internalQuery({
+  args: {
+    entityType: v.union(
+      v.literal('series'),
+      v.literal('season'),
+      v.literal('episode')
+    ),
+    entityId: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      lastSyncedAt: v.number(),
+      tvdbLastUpdated: v.optional(v.number()),
+      syncVersion: v.number(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query('tvdbSyncState')
+      .withIndex('entity', (q) => 
+        q.eq('entityType', args.entityType).eq('entityId', args.entityId)
+      )
+      .first();
+
+    if (!state) return null;
+
+    return {
+      lastSyncedAt: state.lastSyncedAt,
+      tvdbLastUpdated: state.tvdbLastUpdated,
+      syncVersion: state.syncVersion,
+    };
+  },
+});
+
+// ============================================================================
 // Mapping Queries
 // ============================================================================
 

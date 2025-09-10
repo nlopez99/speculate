@@ -79,3 +79,37 @@ export const tvdbSyncConfigValidator = v.object({
   value: v.union(v.string(), v.number(), v.boolean()),
   updatedAt: v.number(),
 });
+
+export const tvdbSyncStateValidator = v.object({
+  entityType: v.union(
+    v.literal('series'),
+    v.literal('season'),
+    v.literal('episode')
+  ),
+  entityId: v.string(), // TVDB ID
+  lastSyncedAt: v.number(),
+  tvdbLastUpdated: v.optional(v.number()),
+  syncVersion: v.number(), // Track sync algorithm version
+});
+
+export const syncJobsValidator = v.object({
+  entityType: v.union(
+    v.literal('series'),
+    v.literal('season'),
+    v.literal('episode'),
+    v.literal('fullSync')
+  ),
+  entityId: v.string(),
+  status: v.union(
+    v.literal('pending'),
+    v.literal('running'),
+    v.literal('completed'),
+    v.literal('failed')
+  ),
+  priority: v.optional(v.number()),
+  startedAt: v.optional(v.number()),
+  completedAt: v.optional(v.number()),
+  error: v.optional(v.string()),
+  retryCount: v.optional(v.number()),
+  metadata: v.optional(v.any()),
+});

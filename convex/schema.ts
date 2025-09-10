@@ -5,6 +5,8 @@ import {
   tvdbIdMappingValidator,
   tvdbSyncLogValidator,
   tvdbSyncConfigValidator,
+  tvdbSyncStateValidator,
+  syncJobsValidator,
 } from './tvdb/syncer/schema';
 
 /* =====================
@@ -592,7 +594,8 @@ export default defineSchema({
 
   seasons: defineTable(seasonsValidator)
     .index('showId', ['showId'])
-    .index('show_seasonNumber', ['showId', 'seasonNumber']),
+    .index('show_seasonNumber', ['showId', 'seasonNumber'])
+    .index('tvdbId', ['tvdbId']),
 
   episodes: defineTable(episodesValidator)
     .index('showId', ['showId'])
@@ -600,7 +603,8 @@ export default defineSchema({
     .index('airDateUtc', ['airDateUtc'])
     .index('show_season_episode', ['showId', 'seasonNumber', 'episodeNumber'])
     .index('show_airDateUtc', ['showId', 'airDateUtc']) // For upcoming episodes by show
-    .index('tmdbId', ['tmdbId']),
+    .index('tmdbId', ['tmdbId'])
+    .index('tvdbId', ['tvdbId']),
 
   characters: defineTable(charactersValidator).index('showId', ['showId']).index('name', ['name']),
 
@@ -770,4 +774,11 @@ export default defineSchema({
     .index('status', ['status']),
 
   tvdbSyncConfig: defineTable(tvdbSyncConfigValidator).index('key', ['key']),
+
+  tvdbSyncState: defineTable(tvdbSyncStateValidator)
+    .index('entity', ['entityType', 'entityId']),
+
+  syncJobs: defineTable(syncJobsValidator)
+    .index('entity', ['entityType', 'entityId', 'status'])
+    .index('status', ['status']),
 });

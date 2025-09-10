@@ -1,0 +1,1287 @@
+diff --git a/convex/schema.ts b/convex/schema.ts
+index 944828f..e2af0de 100644
+--- a/convex/schema.ts
++++ b/convex/schema.ts
+@@ -5,6 +5,8 @@ import {
+   tvdbIdMappingValidator,
+   tvdbSyncLogValidator,
+   tvdbSyncConfigValidator,
++  tvdbSyncStateValidator,
++  syncJobsValidator,
+ } from './tvdb/syncer/schema';
+ 
+ /* =====================
+@@ -592,7 +594,8 @@ export default defineSchema({
+ 
+   seasons: defineTable(seasonsValidator)
+     .index('showId', ['showId'])
+-    .index('show_seasonNumber', ['showId', 'seasonNumber']),
++    .index('show_seasonNumber', ['showId', 'seasonNumber'])
++    .index('tvdbId', ['tvdbId']),
+ 
+   episodes: defineTable(episodesValidator)
+     .index('showId', ['showId'])
+@@ -600,7 +603,8 @@ export default defineSchema({
+     .index('airDateUtc', ['airDateUtc'])
+     .index('show_season_episode', ['showId', 'seasonNumber', 'episodeNumber'])
+     .index('show_airDateUtc', ['showId', 'airDateUtc']) // For upcoming episodes by show
+-    .index('tmdbId', ['tmdbId']),
++    .index('tmdbId', ['tmdbId'])
++    .index('tvdbId', ['tvdbId']),
+ 
+   characters: defineTable(charactersValidator).index('showId', ['showId']).index('name', ['name']),
+ 
+@@ -770,4 +774,11 @@ export default defineSchema({
+     .index('status', ['status']),
+ 
+   tvdbSyncConfig: defineTable(tvdbSyncConfigValidator).index('key', ['key']),
++
++  tvdbSyncState: defineTable(tvdbSyncStateValidator)
++    .index('entity', ['entityType', 'entityId']),
++
++  syncJobs: defineTable(syncJobsValidator)
++    .index('entity', ['entityType', 'entityId', 'status'])
++    .index('status', ['status']),
+ });
+diff --git a/convex/tvdb/syncer/actions.ts b/convex/tvdb/syncer/actions.ts
+index cc54ccd..29dcfcf 100644
+--- a/convex/tvdb/syncer/actions.ts
++++ b/convex/tvdb/syncer/actions.ts
+@@ -3,9 +3,344 @@ import { internal } from '../../_generated/api';
+ import { v } from 'convex/values';
+ import { getAuthenticatedClient } from './client';
+ import type { SyncChanges, SyncResult } from './types';
++import type {
++  SeriesExtendedRecord,
++  SeasonExtendedRecord,
++  EpisodeExtendedRecord,
++  SeasonTypeEnum,
++} from '../client/api';
++import { RegisteredAction } from 'convex/server';
+ 
+ // ============================================================================
+-// Main Sync Actions
++// Rate Limiting
++// ============================================================================
++
++class RateLimiter {
++  private requests: number[] = [];
++  private readonly maxRequests: number;
++  private readonly windowMs: number;
++
++  constructor(maxRequests = 100, windowMs = 60000) {
++    this.maxRequests = maxRequests;
++    this.windowMs = windowMs;
++  }
++
++  async waitIfNeeded(): Promise<void> {
++    const now = Date.now();
++    // Remove old requests outside the window
++    this.requests = this.requests.filter((time) => now - time < this.windowMs);
++
++    if (this.requests.length >= this.maxRequests) {
++      // Calculate wait time
++      const oldestRequest = this.requests[0];
++      const waitTime = this.windowMs - (now - oldestRequest) + 100; // Add 100ms buffer
++
++      if (waitTime > 0) {
++        console.log(`[RateLimit] Waiting ${waitTime}ms before next request`);
++        await new Promise((resolve) => setTimeout(resolve, waitTime));
++      }
++    }
++
++    this.requests.push(Date.now());
++  }
++}
++
++// Global rate limiter instance
++const rateLimiter = new RateLimiter(100, 60000); // 100 requests per minute
++
++// ============================================================================
++// New Optimized Sync Actions
++// ============================================================================
++
++export const syncSeriesDeep = internalAction({
++  args: {
++    seriesId: v.string(),
++    options: v.optional(
++      v.object({
++        force: v.optional(v.boolean()),
++        syncTTLHours: v.optional(v.number()),
++        maxConcurrentSeasons: v.optional(v.number()),
++        episodesPageSize: v.optional(v.number()),
++      })
++    ),
++  },
++  returns: v.object({
++    success: v.boolean(),
++    seriesId: v.optional(v.id('shows')),
++    stats: v.object({
++      seasons: v.number(),
++      episodes: v.number(),
++      created: v.object({
++        series: v.boolean(),
++        seasons: v.number(),
++        episodes: v.number(),
++      }),
++      updated: v.object({
++        series: v.boolean(),
++        seasons: v.number(),
++        episodes: v.number(),
++      }),
++      apiCalls: v.number(),
++      duration: v.number(),
++    }),
++    error: v.optional(v.string()),
++  }),
++  handler: async (
++    ctx,
++    args
++  ): Promise<{
++    success: boolean;
++    stats: {
++      seasons: number;
++      episodes: number;
++      created: { series: boolean; seasons: number; episodes: number };
++      updated: { series: boolean; seasons: number; episodes: number };
++      apiCalls: number;
++      duration: number;
++    };
++    error?: string;
++  }> => {
++    const startTime = Date.now();
++    const seriesIdStr = args.seriesId;
++    const syncTTLHours = args.options?.syncTTLHours ?? 24;
++    const maxConcurrentSeasons = args.options?.maxConcurrentSeasons ?? 5;
++    const episodesPageSize = args.options?.episodesPageSize ?? 500;
++    let apiCalls = 0;
++
++    try {
++      // Check if we should sync (TTL-based)
++      if (!args.options?.force) {
++        const syncState = await ctx.runQuery(internal.tvdb.syncer.queries.getSyncState, {
++          entityType: 'series',
++          entityId: seriesIdStr,
++        });
++
++        if (syncState) {
++          const hoursSinceSync = (Date.now() - syncState.lastSyncedAt) / (1000 * 60 * 60);
++          if (hoursSinceSync < syncTTLHours) {
++            console.log(
++              `[SyncDeep] Skipping series ${seriesIdStr} - synced ${hoursSinceSync.toFixed(1)}h ago (TTL: ${syncTTLHours}h)`
++            );
++            return {
++              success: true,
++              stats: {
++                seasons: 0,
++                episodes: 0,
++                created: { series: false, seasons: 0, episodes: 0 },
++                updated: { series: false, seasons: 0, episodes: 0 },
++                apiCalls: 0,
++                duration: Date.now() - startTime,
++              },
++            };
++          }
++        }
++      }
++
++      // Create or update sync job
++      await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSyncJob, {
++        entityType: 'series',
++        entityId: seriesIdStr,
++        status: 'running',
++        startedAt: Date.now(),
++      });
++
++      // Get authenticated client
++      const client = await getAuthenticatedClient(ctx);
++
++      // 1. Fetch series with translations
++      console.log(`[SyncDeep] Fetching series ${seriesIdStr} with translations`);
++      await rateLimiter.waitIfNeeded();
++      const seriesResponse = await client.getSeriesExtended(parseInt(seriesIdStr), {
++        meta: 'translations',
++      });
++      apiCalls++;
++
++      const seriesData = seriesResponse.data;
++      if (!seriesData) {
++        throw new Error('No series data returned from TVDB');
++      }
++
++      // 2. Fetch all seasons in parallel (with concurrency limit)
++      const seasonIds = seriesData.seasons?.map((s) => s.id).filter(Boolean) || [];
++      const seasonsData: SeasonExtendedRecord[] = [];
++
++      console.log(
++        `[SyncDeep] Fetching ${seasonIds.length} seasons with concurrency limit ${maxConcurrentSeasons}`
++      );
++
++      // Process seasons in batches
++      for (let i = 0; i < seasonIds.length; i += maxConcurrentSeasons) {
++        const batch = seasonIds.slice(i, i + maxConcurrentSeasons);
++        const seasonPromises = batch.map(async (seasonId) => {
++          try {
++            await rateLimiter.waitIfNeeded();
++            const seasonResponse = await client.getSeasonExtended(seasonId!);
++            apiCalls++;
++            return seasonResponse.data;
++          } catch (error) {
++            console.error(`[SyncDeep] Failed to fetch season ${seasonId}:`, error);
++            return null;
++          }
++        });
++
++        const batchResults = await Promise.all(seasonPromises);
++        seasonsData.push(...(batchResults.filter(Boolean) as SeasonExtendedRecord[]));
++
++        // Small delay between batches to avoid rate limiting
++        if (i + maxConcurrentSeasons < seasonIds.length) {
++          await new Promise((resolve) => setTimeout(resolve, 100));
++        }
++      }
++
++      // 3. Fetch episodes for each season using the bulk episode endpoints
++      const episodesBySeason: Record<string, EpisodeExtendedRecord[]> = {};
++
++      console.log(`[SyncDeep] Fetching episodes for ${seasonsData.length} seasons`);
++
++      for (const season of seasonsData) {
++        const seasonIdStr = season.id?.toString() || '';
++        if (!seasonIdStr) continue;
++
++        const seasonType = (season.type?.type || 'official') as SeasonTypeEnum;
++        const episodes: EpisodeExtendedRecord[] = [];
++
++        try {
++          // Try to fetch episodes with translations
++          let page = 0;
++          let hasMore = true;
++
++          while (hasMore && episodes.length < episodesPageSize) {
++            try {
++              await rateLimiter.waitIfNeeded();
++              const episodesResponse = await client.getSeriesSeasonEpisodesTranslated(
++                parseInt(seriesIdStr),
++                seasonType,
++                'eng', // Default to English
++                page
++              );
++              apiCalls++;
++
++              if (episodesResponse.data?.episodes && episodesResponse.data.episodes.length > 0) {
++                // Convert base episodes to extended format with translations
++                const extendedEpisodes = episodesResponse.data.episodes.map(
++                  (ep) =>
++                    ({
++                      ...ep,
++                      seriesId: parseInt(seriesIdStr),
++                      seasonNumber: season.number,
++                      translations: {
++                        nameTranslations: ep.nameTranslations,
++                        overviewTranslations: ep.overviewTranslations,
++                      },
++                    }) as EpisodeExtendedRecord
++                );
++
++                episodes.push(...extendedEpisodes);
++
++                // Check if there are more pages
++                hasMore = episodesResponse.data.episodes.length === 100; // Assuming 100 per page
++                page++;
++              } else {
++                hasMore = false;
++              }
++            } catch (error) {
++              console.warn(
++                `[SyncDeep] Failed to fetch episodes page ${page} for season ${seasonIdStr}:`,
++                error
++              );
++              hasMore = false;
++            }
++          }
++
++          if (episodes.length > 0) {
++            episodesBySeason[seasonIdStr] = episodes;
++          }
++        } catch (error) {
++          console.error(`[SyncDeep] Failed to fetch episodes for season ${seasonIdStr}:`, error);
++        }
++      }
++
++      // 4. Bulk upsert everything in a single mutation
++      console.log(`[SyncDeep] Bulk upserting series, ${seasonsData.length} seasons, and episodes`);
++
++      const result = await ctx.runMutation(
++        internal.tvdb.syncer.internalMutations.bulkUpsertSeriesBundle,
++        {
++          series: seriesData,
++          seasons: seasonsData,
++          episodesBySeason,
++          syncTTLHours,
++        }
++      );
++
++      // Update sync job as completed
++      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncJob, {
++        entityType: 'series',
++        entityId: seriesIdStr,
++        status: 'completed',
++        completedAt: Date.now(),
++        metadata: {
++          stats: {
++            seasons: result.seasonIds.length,
++            episodes: result.episodeCount,
++            created: result.created,
++            updated: result.updated,
++            apiCalls,
++            duration: Date.now() - startTime,
++          },
++        },
++      });
++
++      const duration = Date.now() - startTime;
++      console.log(
++        `[SyncDeep] Completed series ${seriesIdStr} in ${duration}ms: ` +
++          `${result.seasonIds.length} seasons, ${result.episodeCount} episodes, ` +
++          `${apiCalls} API calls`
++      );
++
++      return {
++        success: true,
++        stats: {
++          seasons: result.seasonIds.length,
++          episodes: result.episodeCount,
++          created: result.created,
++          updated: result.updated,
++          apiCalls,
++          duration,
++        },
++      };
++    } catch (error) {
++      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
++
++      // Update sync job as failed
++      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncJob, {
++        entityType: 'series',
++        entityId: seriesIdStr,
++        status: 'failed',
++        completedAt: Date.now(),
++        error: errorMessage,
++      });
++
++      console.error(`[SyncDeep] Failed to sync series ${seriesIdStr}:`, error);
++
++      return {
++        success: false,
++        stats: {
++          seasons: 0,
++          episodes: 0,
++          created: { series: false, seasons: 0, episodes: 0 },
++          updated: { series: false, seasons: 0, episodes: 0 },
++          apiCalls,
++          duration: Date.now() - startTime,
++        },
++        error: errorMessage,
++      };
++    }
++  },
++});
++
++// ============================================================================
++// Main Sync Actions (Legacy - will be deprecated)
+ // ============================================================================
+ 
+ export const syncSeries = internalAction({
+diff --git a/convex/tvdb/syncer/fullSync.ts b/convex/tvdb/syncer/fullSync.ts
+index e150edd..2cf80d6 100644
+--- a/convex/tvdb/syncer/fullSync.ts
++++ b/convex/tvdb/syncer/fullSync.ts
+@@ -48,101 +48,152 @@ export const syncAllSeriesPage = internalAction({
+   args: {
+     page: v.number(),
+     syncId: v.string(),
++    maxConcurrentSyncs: v.optional(v.number()),
+   },
+-  handler: async (ctx, args): Promise<void> => {
++  returns: v.null(),
++  handler: async (ctx, args) => {
++    const maxConcurrent = args.maxConcurrentSyncs ?? 10;
++
+     try {
+       // Get authenticated client (reuses existing token)
+       const client = await getAuthenticatedClient(ctx);
+ 
+-      // Get series for this page
+-      let hasNextPage = true;
+-      let page = args.page;
+-      while (hasNextPage) {
+-        console.log(`[Full Sync] Fetching page ${page} from TVDB API`);
+-        const response = await client.getAllSeries(page);
++      console.log(`[Full Sync] Fetching page ${args.page} from TVDB API`);
++      const response = await client.getAllSeries(args.page);
+ 
+-        if (!response.data || response.data.length === 0) {
+-          console.log(`[Full Sync] No data returned for page ${page}`);
+-          return;
+-        }
++      if (!response.data || response.data.length === 0) {
++        console.log(`[Full Sync] No data returned for page ${args.page}`);
++        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
++          syncId: args.syncId,
++          metadata: {
++            totalPages: args.page,
++            totalSeries: 0,
++          },
++        });
++        return null;
++      }
+ 
+-        const series = response.data;
+-        const links = response.links;
++      const series = response.data;
++      const links = response.links;
+ 
+-        console.log(`[Full Sync] Page ${page}: Found ${series.length} series. Links:`, {
+-          next: links?.next,
+-          last: links?.last,
+-          total_items: links?.total_items,
+-          page_size: links?.page_size,
+-        });
++      console.log(`[Full Sync] Page ${args.page}: Found ${series.length} series. Links:`, {
++        next: links?.next,
++        last: links?.last,
++        total_items: links?.total_items,
++        page_size: links?.page_size,
++      });
+ 
+-        let processed = 0;
+-        let skipped = 0;
+-        const BATCH_SIZE = 5; // Process 5 series at a time to limit concurrency
+-        const BATCH_DELAY_MS = 100; // Small delay between batches
+-
+-        // Process series in batches to avoid overwhelming the database
+-        for (let i = 0; i < series.length; i += BATCH_SIZE) {
+-          const batch = series.slice(i, i + BATCH_SIZE);
+-
+-          // Process each batch with limited concurrency
+-          await Promise.all(
+-            batch.map(async (show) => {
+-              const showId = show?.id?.toString();
+-              if (!showId) return;
+-
+-              try {
+-                // Stagger the scheduling slightly within the batch
+-                const delay = (i % BATCH_SIZE) * 50;
+-                await ctx.scheduler.runAfter(delay, internal.tvdb.syncer.actions.syncSeries, {
+-                  seriesId: showId,
+-                });
+-
+-                processed++;
+-              } catch (error) {
+-                console.error(`Failed to queue series ${showId}: ${error}`);
++      let processed = 0;
++      let failed = 0;
++
++      // Process series in batches with the new syncSeriesDeep
++      for (let i = 0; i < series.length; i += maxConcurrent) {
++        const batch = series.slice(i, i + maxConcurrent);
++
++        // Process batch in parallel
++        const results = await Promise.allSettled(
++          batch.map(async (show) => {
++            const showId = show?.id?.toString();
++            if (!showId) return null;
++
++            try {
++              // Use the new syncSeriesDeep action
++              const result = await ctx.runAction(internal.tvdb.syncer.actions.syncSeriesDeep, {
++                seriesId: showId,
++                options: {
++                  syncTTLHours: 24, // Default TTL for full sync
++                  maxConcurrentSeasons: 3, // Limit concurrency within each series
++                },
++              });
++
++              if (result.success) {
++                return { showId, success: true, stats: result.stats };
++              } else {
++                return { showId, success: false, error: result.error };
+               }
+-            })
+-          );
++            } catch (error) {
++              console.error(`[Full Sync] Failed to sync series ${showId}:`, error);
++              return {
++                showId,
++                success: false,
++                error: error instanceof Error ? error.message : 'Unknown error',
++              };
++            }
++          })
++        );
+ 
+-          // Add a small delay between batches to prevent connection pool exhaustion
+-          if (i + BATCH_SIZE < series.length) {
+-            await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
++        // Count results
++        for (const result of results) {
++          if (result.status === 'fulfilled' && result.value?.success) {
++            processed++;
++          } else {
++            failed++;
+           }
+         }
+ 
+-        // Log page completion
+-        console.log(
+-          `[Full Sync] Page ${page} complete: processed=${processed}, skipped=${skipped}, total=${processed + skipped}`
+-        );
++        // Small delay between batches to avoid rate limiting
++        if (i + maxConcurrent < series.length) {
++          await new Promise((resolve) => setTimeout(resolve, 200));
++        }
++
++        // Log progress periodically
++        if ((i + maxConcurrent) % 50 === 0 || i + maxConcurrent >= series.length) {
++          console.log(
++            `[Full Sync] Page ${args.page} progress: ${i + Math.min(maxConcurrent, series.length - i)}/${series.length} series`
++          );
++        }
++      }
++
++      // Log page completion
++      console.log(
++        `[Full Sync] Page ${args.page} complete: processed=${processed}, failed=${failed}, total=${series.length}`
++      );
++
++      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
++        syncId: args.syncId,
++        message: `Page ${args.page} complete: Processed ${processed} series, ${failed} failed`,
++        metadata: {
++          page: args.page,
++          processed,
++          skipped: 0,
++        },
++      });
++
++      // Schedule next page if available
++      const hasNextPage = links?.next !== undefined && links.next !== null;
++
++      if (hasNextPage) {
++        // Schedule the next page as a separate action to avoid long-running actions
++        await ctx.scheduler.runAfter(100, internal.tvdb.syncer.fullSync.syncAllSeriesPage, {
++          page: args.page + 1,
++          syncId: args.syncId,
++          maxConcurrentSyncs: maxConcurrent,
++        });
+ 
+-        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncProgress, {
++        console.log(`[Full Sync] Scheduled page ${args.page + 1}`);
++      } else {
++        // Complete the sync
++        await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
+           syncId: args.syncId,
+-          message: `Page ${page} complete: Processed ${processed} new series, skipped ${skipped} existing`,
+           metadata: {
+-            page: page,
+-            processed,
+-            skipped,
++            totalPages: args.page + 1,
++            totalSeries: links?.total_items || (args.page + 1) * series.length,
+           },
+         });
+ 
+-        // Process next page if available
+-        hasNextPage = links?.next !== undefined && links.next !== null;
+-
+-        if (hasNextPage) {
+-          page++;
+-        } else {
+-          await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncComplete, {
+-            syncId: args.syncId,
+-            metadata: {
+-              totalPages: page + 1,
+-              totalSeries: links?.total_items || page + 1,
+-            },
+-          });
+-        }
++        console.log(
++          `[Full Sync] Completed all pages. Total series: ${links?.total_items || 'unknown'}`
++        );
+       }
++
++      return null;
+     } catch (err) {
+-      console.log(err);
++      console.error(`[Full Sync] Error on page ${args.page}:`, err);
++
++      await ctx.runMutation(internal.tvdb.syncer.internalMutations.logSyncError, {
++        syncId: args.syncId,
++        error: err instanceof Error ? err.message : 'Unknown error',
++      });
+ 
+       throw err;
+     }
+diff --git a/convex/tvdb/syncer/internalMutations.ts b/convex/tvdb/syncer/internalMutations.ts
+index cbe9d25..526545f 100644
+--- a/convex/tvdb/syncer/internalMutations.ts
++++ b/convex/tvdb/syncer/internalMutations.ts
+@@ -732,6 +732,452 @@ export const logSyncError = internalMutation({
+   },
+ });
+ 
++// ============================================================================
++// Bulk Upsert Mutations
++// ============================================================================
++
++export const bulkUpsertSeriesBundle = internalMutation({
++  args: {
++    series: v.any(), // SeriesExtendedRecord
++    seasons: v.array(v.any()), // SeasonExtendedRecord[]
++    episodesBySeason: v.record(v.string(), v.array(v.any())), // Record<seasonId, EpisodeExtendedRecord[]>
++    syncTTLHours: v.optional(v.number()), // TTL for sync state
++  },
++  returns: v.object({
++    seriesId: v.id('shows'),
++    seasonIds: v.array(v.id('seasons')),
++    episodeCount: v.number(),
++    created: v.object({
++      series: v.boolean(),
++      seasons: v.number(),
++      episodes: v.number(),
++    }),
++    updated: v.object({
++      series: v.boolean(),
++      seasons: v.number(),
++      episodes: v.number(),
++    }),
++  }),
++  handler: async (ctx, args) => {
++    const seriesData = args.series as SeriesExtendedRecord;
++    const seasonsData = args.seasons as SeasonExtendedRecord[];
++    const episodesBySeason = args.episodesBySeason as Record<string, EpisodeExtendedRecord[]>;
++    const syncTTLHours = args.syncTTLHours ?? 24; // Default 24 hour TTL
++    const now = Date.now();
++
++    const created = { series: false, seasons: 0, episodes: 0 };
++    const updated = { series: false, seasons: 0, episodes: 0 };
++
++    // 1. Upsert Series
++    const seriesIdStr = seriesData.id?.toString() || '';
++    let existingMapping = await ctx.db
++      .query('tvdbIdMapping')
++      .withIndex('tvdbId_type', (q) => q.eq('tvdbId', seriesIdStr).eq('tvdbType', 'series'))
++      .first();
++
++    let showId: Id<'shows'>;
++    
++    const showData = {
++      title: seriesData.name || '',
++      slug: seriesData.slug || seriesIdStr,
++      overview: seriesData.overview,
++      posterUrl: seriesData.image || undefined,
++      backdropUrl: seriesData.artworks?.[0]?.image || undefined,
++      firstAirYear: seriesData.firstAired ? new Date(seriesData.firstAired).getFullYear() : undefined,
++      status: mapSeriesStatus(seriesData.status?.name),
++      tvdbId: seriesIdStr,
++      tmdbId: seriesData.remoteIds?.find((r) => r.sourceName === 'TheMovieDB')?.id,
++      imdbId: seriesData.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
++      network: seriesData.originalNetwork?.name,
++      genres: seriesData.genres?.map((g) => g.name || '').filter(Boolean),
++      updatedAt: now,
++    };
++
++    if (existingMapping?.convexId) {
++      showId = existingMapping.convexId as Id<'shows'>;
++      const existing = await ctx.db.get(showId);
++      if (existing) {
++        // Only update if data has changed
++        const hasChanges = Object.entries(showData).some(
++          ([key, value]) => existing[key as keyof typeof existing] !== value
++        );
++        if (hasChanges) {
++          await ctx.db.patch(showId, showData);
++          updated.series = true;
++        }
++      }
++    } else {
++      created.series = true;
++      showId = await ctx.db.insert('shows', {
++        ...showData,
++        followersCount: 0,
++        predictionsCount: 0,
++        createdAt: now,
++      });
++
++      await ctx.db.insert('tvdbIdMapping', {
++        tvdbId: seriesIdStr,
++        tvdbType: 'series',
++        convexId: showId,
++        tmdbId: showData.tmdbId,
++        imdbId: showData.imdbId,
++        slug: showData.slug,
++        createdAt: now,
++        updatedAt: now,
++      });
++    }
++
++    // 2. Prefetch existing seasons and episodes for efficient bulk update
++    const existingSeasons = await ctx.db
++      .query('seasons')
++      .withIndex('showId', (q) => q.eq('showId', showId))
++      .collect();
++
++    const seasonsByNumber = new Map(
++      existingSeasons.map(s => [s.seasonNumber, s])
++    );
++
++    // Prefetch all episodes for this show
++    const existingEpisodes = await ctx.db
++      .query('episodes')
++      .withIndex('showId', (q) => q.eq('showId', showId))
++      .collect();
++
++    const episodesByKey = new Map(
++      existingEpisodes.map(e => [`${e.seasonNumber}-${e.episodeNumber}`, e])
++    );
++
++    // 3. Upsert seasons
++    const seasonIds: Id<'seasons'>[] = [];
++    const seasonIdMapping = new Map<string, Id<'seasons'>>();
++
++    for (const seasonData of seasonsData) {
++      const seasonTvdbId = seasonData.id?.toString() || '';
++      const seasonNumber = seasonData.number || 0;
++      
++      let existingSeason = seasonsByNumber.get(seasonNumber);
++      let seasonId: Id<'seasons'>;
++
++      const seasonDataToSave = {
++        showId,
++        seasonNumber,
++        title: seasonData.name,
++        tvdbId: seasonTvdbId,
++        posterUrl: seasonData.image || undefined,
++        episodeCount: seasonData.episodes?.length,
++        updatedAt: now,
++      };
++
++      if (existingSeason) {
++        seasonId = existingSeason._id;
++        // Only update if data has changed
++        const hasChanges = Object.entries(seasonDataToSave).some(
++          ([key, value]) => existingSeason![key as keyof typeof existingSeason] !== value
++        );
++        if (hasChanges) {
++          await ctx.db.patch(seasonId, seasonDataToSave);
++          updated.seasons++;
++        }
++      } else {
++        seasonId = await ctx.db.insert('seasons', {
++          ...seasonDataToSave,
++          createdAt: now,
++        });
++        created.seasons++;
++      }
++
++      seasonIds.push(seasonId);
++      seasonIdMapping.set(seasonTvdbId, seasonId);
++    }
++
++    // 4. Bulk upsert episodes
++    let episodeCount = 0;
++
++    for (const [seasonIdStr, episodes] of Object.entries(episodesBySeason)) {
++      const seasonId = seasonIdMapping.get(seasonIdStr);
++      if (!seasonId) continue;
++
++      const season = seasonsData.find(s => s.id?.toString() === seasonIdStr);
++      const seasonNumber = season?.number || 0;
++
++      for (const episodeData of episodes) {
++        const episodeTvdbId = episodeData.id?.toString() || '';
++        const episodeNumber = episodeData.number || 0;
++        const episodeKey = `${seasonNumber}-${episodeNumber}`;
++        
++        let existingEpisode = episodesByKey.get(episodeKey);
++        episodeCount++;
++
++        const episodeDataToSave = {
++          showId,
++          seasonId,
++          seasonNumber,
++          episodeNumber,
++          title: episodeData.name || `Episode ${episodeNumber}`,
++          overview: episodeData.translations?.overviewTranslations?.[0]?.overview,
++          airDateUtc: episodeData.aired
++            ? new Date(
++                /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired) 
++                  ? `${episodeData.aired}T00:00:00Z` 
++                  : episodeData.aired
++              ).getTime()
++            : undefined,
++          runtimeMinutes: episodeData.runtime || undefined,
++          tvdbId: episodeTvdbId,
++          imdbId: episodeData.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
++          stillUrl: episodeData.image || undefined,
++          hasAired: episodeData.aired ? new Date(episodeData.aired) <= new Date() : false,
++          updatedAt: now,
++        };
++
++        if (existingEpisode) {
++          // Only update if data has changed
++          const hasChanges = Object.entries(episodeDataToSave).some(
++            ([key, value]) => existingEpisode![key as keyof typeof existingEpisode] !== value
++          );
++          if (hasChanges) {
++            await ctx.db.patch(existingEpisode._id, episodeDataToSave);
++            updated.episodes++;
++          }
++        } else {
++          await ctx.db.insert('episodes', {
++            ...episodeDataToSave,
++            createdAt: now,
++          });
++          created.episodes++;
++        }
++
++        // Create tvdbIdMapping for episode if it has a TVDB ID and doesn't exist
++        if (episodeTvdbId && !existingEpisode) {
++          const existingEpisodeMapping = await ctx.db
++            .query('tvdbIdMapping')
++            .withIndex('tvdbId_type', (q) => 
++              q.eq('tvdbId', episodeTvdbId).eq('tvdbType', 'episode')
++            )
++            .first();
++
++          if (!existingEpisodeMapping) {
++            await ctx.db.insert('tvdbIdMapping', {
++              tvdbId: episodeTvdbId,
++              tvdbType: 'episode',
++              convexId: undefined,
++              tmdbId: undefined,
++              imdbId: episodeDataToSave.imdbId,
++              slug: undefined,
++              createdAt: now,
++              updatedAt: now,
++            });
++          }
++        }
++      }
++    }
++
++    // 5. Update sync state
++    const syncState = await ctx.db
++      .query('tvdbSyncState')
++      .withIndex('entity', (q) => q.eq('entityType', 'series').eq('entityId', seriesIdStr))
++      .first();
++
++    if (syncState) {
++      await ctx.db.patch(syncState._id, {
++        lastSyncedAt: now,
++        tvdbLastUpdated: seriesData.lastUpdated ? new Date(seriesData.lastUpdated).getTime() : undefined,
++        syncVersion: 2, // Version 2 = bulk sync
++      });
++    } else {
++      await ctx.db.insert('tvdbSyncState', {
++        entityType: 'series',
++        entityId: seriesIdStr,
++        lastSyncedAt: now,
++        tvdbLastUpdated: seriesData.lastUpdated ? new Date(seriesData.lastUpdated).getTime() : undefined,
++        syncVersion: 2,
++      });
++    }
++
++    return {
++      seriesId: showId,
++      seasonIds,
++      episodeCount,
++      created,
++      updated,
++    };
++  },
++});
++
++export const bulkUpsertEpisodes = internalMutation({
++  args: {
++    showId: v.id('shows'),
++    seasonId: v.id('seasons'),
++    seasonNumber: v.number(),
++    episodes: v.array(v.any()), // EpisodeExtendedRecord[]
++  },
++  returns: v.object({
++    created: v.number(),
++    updated: v.number(),
++  }),
++  handler: async (ctx, args) => {
++    const episodesData = args.episodes as EpisodeExtendedRecord[];
++    const now = Date.now();
++    const created = { count: 0 };
++    const updated = { count: 0 };
++
++    // Prefetch existing episodes for this season
++    const existingEpisodes = await ctx.db
++      .query('episodes')
++      .withIndex('seasonId', (q) => q.eq('seasonId', args.seasonId))
++      .collect();
++
++    const episodesByNumber = new Map(
++      existingEpisodes.map(e => [e.episodeNumber, e])
++    );
++
++    for (const episodeData of episodesData) {
++      const episodeTvdbId = episodeData.id?.toString() || '';
++      const episodeNumber = episodeData.number || 0;
++      
++      let existingEpisode = episodesByNumber.get(episodeNumber);
++
++      const episodeDataToSave = {
++        showId: args.showId,
++        seasonId: args.seasonId,
++        seasonNumber: args.seasonNumber,
++        episodeNumber,
++        title: episodeData.name || `Episode ${episodeNumber}`,
++        overview: episodeData.translations?.overviewTranslations?.[0]?.overview,
++        airDateUtc: episodeData.aired
++          ? new Date(
++              /^\d{4}-\d{2}-\d{2}$/.test(episodeData.aired) 
++                ? `${episodeData.aired}T00:00:00Z` 
++                : episodeData.aired
++            ).getTime()
++          : undefined,
++        runtimeMinutes: episodeData.runtime || undefined,
++        tvdbId: episodeTvdbId,
++        imdbId: episodeData.remoteIds?.find((r) => r.sourceName === 'IMDB')?.id,
++        stillUrl: episodeData.image || undefined,
++        hasAired: episodeData.aired ? new Date(episodeData.aired) <= new Date() : false,
++        updatedAt: now,
++      };
++
++      if (existingEpisode) {
++        // Only update if data has changed
++        const hasChanges = Object.entries(episodeDataToSave).some(
++          ([key, value]) => existingEpisode![key as keyof typeof existingEpisode] !== value
++        );
++        if (hasChanges) {
++          await ctx.db.patch(existingEpisode._id, episodeDataToSave);
++          updated.count++;
++        }
++      } else {
++        await ctx.db.insert('episodes', {
++          ...episodeDataToSave,
++          createdAt: now,
++        });
++        created.count++;
++      }
++    }
++
++    return {
++      created: created.count,
++      updated: updated.count,
++    };
++  },
++});
++
++// ============================================================================
++// Sync Job Management
++// ============================================================================
++
++export const upsertSyncJob = internalMutation({
++  args: {
++    entityType: v.union(
++      v.literal('series'),
++      v.literal('season'),
++      v.literal('episode'),
++      v.literal('fullSync')
++    ),
++    entityId: v.string(),
++    status: v.union(
++      v.literal('pending'),
++      v.literal('running'),
++      v.literal('completed'),
++      v.literal('failed')
++    ),
++    startedAt: v.optional(v.number()),
++    priority: v.optional(v.number()),
++  },
++  returns: v.null(),
++  handler: async (ctx, args) => {
++    const existing = await ctx.db
++      .query('syncJobs')
++      .withIndex('entity', (q) => 
++        q.eq('entityType', args.entityType)
++         .eq('entityId', args.entityId)
++         .eq('status', 'running')
++      )
++      .first();
++
++    if (existing) {
++      await ctx.db.patch(existing._id, {
++        status: args.status,
++        startedAt: args.startedAt,
++      });
++    } else {
++      await ctx.db.insert('syncJobs', {
++        entityType: args.entityType,
++        entityId: args.entityId,
++        status: args.status,
++        priority: args.priority,
++        startedAt: args.startedAt,
++        retryCount: 0,
++      });
++    }
++    return null;
++  },
++});
++
++export const updateSyncJob = internalMutation({
++  args: {
++    entityType: v.union(
++      v.literal('series'),
++      v.literal('season'),
++      v.literal('episode'),
++      v.literal('fullSync')
++    ),
++    entityId: v.string(),
++    status: v.union(
++      v.literal('pending'),
++      v.literal('running'),
++      v.literal('completed'),
++      v.literal('failed')
++    ),
++    completedAt: v.optional(v.number()),
++    error: v.optional(v.string()),
++    metadata: v.optional(v.any()),
++  },
++  returns: v.null(),
++  handler: async (ctx, args) => {
++    const existing = await ctx.db
++      .query('syncJobs')
++      .withIndex('entity', (q) => 
++        q.eq('entityType', args.entityType)
++         .eq('entityId', args.entityId)
++         .eq('status', 'running')
++      )
++      .first();
++
++    if (existing) {
++      await ctx.db.patch(existing._id, {
++        status: args.status,
++        completedAt: args.completedAt,
++        error: args.error,
++        metadata: args.metadata,
++      });
++    }
++    return null;
++  },
++});
++
+ // ============================================================================
+ // Helper Functions
+ // ============================================================================
+diff --git a/convex/tvdb/syncer/mutations.ts b/convex/tvdb/syncer/mutations.ts
+index 91f2959..8d07253 100644
+--- a/convex/tvdb/syncer/mutations.ts
++++ b/convex/tvdb/syncer/mutations.ts
+@@ -96,3 +96,108 @@ export const setSyncEnabled = mutation({
+     };
+   },
+ });
++
++/**
++ * Sync a specific series using the new optimized deep sync
++ * This is useful for testing individual series syncs
++ */
++export const syncSeriesById = mutation({
++  args: {
++    tvdbSeriesId: v.string(),
++    force: v.optional(v.boolean()),
++  },
++  returns: v.object({
++    success: v.boolean(),
++    message: v.string(),
++    syncJobId: v.optional(v.string()),
++  }),
++  handler: async (ctx, args) => {
++    // Schedule the sync action
++    await ctx.scheduler.runAfter(0, internal.tvdb.syncer.actions.syncSeriesDeep, {
++      seriesId: args.tvdbSeriesId,
++      options: {
++        force: args.force,
++        syncTTLHours: 24,
++        maxConcurrentSeasons: 5,
++      },
++    });
++
++    return {
++      success: true,
++      message: `Scheduled deep sync for series ${args.tvdbSeriesId}`,
++      syncJobId: `series_${args.tvdbSeriesId}_${Date.now()}`,
++    };
++  },
++});
++
++/**
++ * Get sync status for a specific entity
++ */
++export const getSyncStatus = mutation({
++  args: {
++    entityType: v.union(
++      v.literal('series'),
++      v.literal('season'),
++      v.literal('episode')
++    ),
++    entityId: v.string(),
++  },
++  returns: v.union(
++    v.null(),
++    v.object({
++      lastSyncedAt: v.number(),
++      tvdbLastUpdated: v.optional(v.number()),
++      syncVersion: v.number(),
++      hoursSinceSync: v.number(),
++      currentJobs: v.array(v.object({
++        status: v.string(),
++        startedAt: v.optional(v.number()),
++        error: v.optional(v.string()),
++      })),
++    })
++  ),
++  handler: async (ctx, args) => {
++    // Get sync state
++    const syncState = await ctx.db
++      .query('tvdbSyncState')
++      .withIndex('entity', (q) => 
++        q.eq('entityType', args.entityType).eq('entityId', args.entityId)
++      )
++      .first();
++
++    if (!syncState) {
++      return null;
++    }
++
++    // Get current sync jobs
++    const jobs = await ctx.db
++      .query('syncJobs')
++      .withIndex('entity', (q) => 
++        q.eq('entityType', args.entityType)
++         .eq('entityId', args.entityId)
++         .eq('status', 'running')
++      )
++      .collect();
++
++    const pendingJobs = await ctx.db
++      .query('syncJobs')
++      .withIndex('entity', (q) => 
++        q.eq('entityType', args.entityType)
++         .eq('entityId', args.entityId)
++         .eq('status', 'pending')
++      )
++      .collect();
++
++    return {
++      lastSyncedAt: syncState.lastSyncedAt,
++      tvdbLastUpdated: syncState.tvdbLastUpdated,
++      syncVersion: syncState.syncVersion,
++      hoursSinceSync: (Date.now() - syncState.lastSyncedAt) / (1000 * 60 * 60),
++      currentJobs: [...jobs, ...pendingJobs].map(job => ({
++        status: job.status,
++        startedAt: job.startedAt,
++        error: job.error,
++      })),
++    };
++  },
++});
+diff --git a/convex/tvdb/syncer/queries.ts b/convex/tvdb/syncer/queries.ts
+index df60005..a35244f 100644
+--- a/convex/tvdb/syncer/queries.ts
++++ b/convex/tvdb/syncer/queries.ts
+@@ -124,6 +124,45 @@ export const shouldSyncEntity = internalQuery({
+ // These queries are no longer used as we've migrated to workpool
+ // The workpool component handles its own queue management
+ 
++// ============================================================================
++// Sync State Queries
++// ============================================================================
++
++export const getSyncState = internalQuery({
++  args: {
++    entityType: v.union(
++      v.literal('series'),
++      v.literal('season'),
++      v.literal('episode')
++    ),
++    entityId: v.string(),
++  },
++  returns: v.union(
++    v.null(),
++    v.object({
++      lastSyncedAt: v.number(),
++      tvdbLastUpdated: v.optional(v.number()),
++      syncVersion: v.number(),
++    })
++  ),
++  handler: async (ctx, args) => {
++    const state = await ctx.db
++      .query('tvdbSyncState')
++      .withIndex('entity', (q) => 
++        q.eq('entityType', args.entityType).eq('entityId', args.entityId)
++      )
++      .first();
++
++    if (!state) return null;
++
++    return {
++      lastSyncedAt: state.lastSyncedAt,
++      tvdbLastUpdated: state.tvdbLastUpdated,
++      syncVersion: state.syncVersion,
++    };
++  },
++});
++
+ // ============================================================================
+ // Mapping Queries
+ // ============================================================================
+diff --git a/convex/tvdb/syncer/schema.ts b/convex/tvdb/syncer/schema.ts
+index 7020a9e..4215c0f 100644
+--- a/convex/tvdb/syncer/schema.ts
++++ b/convex/tvdb/syncer/schema.ts
+@@ -79,3 +79,37 @@ export const tvdbSyncConfigValidator = v.object({
+   value: v.union(v.string(), v.number(), v.boolean()),
+   updatedAt: v.number(),
+ });
++
++export const tvdbSyncStateValidator = v.object({
++  entityType: v.union(
++    v.literal('series'),
++    v.literal('season'),
++    v.literal('episode')
++  ),
++  entityId: v.string(), // TVDB ID
++  lastSyncedAt: v.number(),
++  tvdbLastUpdated: v.optional(v.number()),
++  syncVersion: v.number(), // Track sync algorithm version
++});
++
++export const syncJobsValidator = v.object({
++  entityType: v.union(
++    v.literal('series'),
++    v.literal('season'),
++    v.literal('episode'),
++    v.literal('fullSync')
++  ),
++  entityId: v.string(),
++  status: v.union(
++    v.literal('pending'),
++    v.literal('running'),
++    v.literal('completed'),
++    v.literal('failed')
++  ),
++  priority: v.optional(v.number()),
++  startedAt: v.optional(v.number()),
++  completedAt: v.optional(v.number()),
++  error: v.optional(v.string()),
++  retryCount: v.optional(v.number()),
++  metadata: v.optional(v.any()),
++});

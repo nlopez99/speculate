@@ -1,4 +1,4 @@
-import { mutation } from '../../_generated/server';
+import { mutation, query } from '../../_generated/server';
 import { v } from 'convex/values';
 import { internal } from '../../_generated/api';
 
@@ -93,6 +93,111 @@ export const setSyncEnabled = mutation({
     return {
       success: true,
       message: `Sync ${args.enabled ? 'enabled' : 'disabled'}`,
+    };
+  },
+});
+
+/**
+ * Sync a specific series using the new optimized deep sync
+ * This is useful for testing individual series syncs
+ */
+export const syncSeriesById = mutation({
+  args: {
+    tvdbSeriesId: v.string(),
+    force: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    success: v.boolean(),
+    message: v.string(),
+    syncJobId: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    // Schedule the sync action
+    await ctx.scheduler.runAfter(0, internal.tvdb.syncer.actions.syncSeriesDeep, {
+      seriesId: args.tvdbSeriesId,
+      options: {
+        force: args.force,
+        syncTTLHours: 24,
+        maxConcurrentSeasons: 5,
+      },
+    });
+
+    return {
+      success: true,
+      message: `Scheduled deep sync for series ${args.tvdbSeriesId}`,
+      syncJobId: `series_${args.tvdbSeriesId}_${Date.now()}`,
+    };
+  },
+});
+
+/**
+ * Get sync status for a specific entity
+ */
+export const getSyncStatus = query({
+  args: {
+    entityType: v.union(
+      v.literal('series'),
+      v.literal('season'),
+      v.literal('episode')
+    ),
+    entityId: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      lastSyncedAt: v.number(),
+      tvdbLastUpdated: v.optional(v.number()),
+      syncVersion: v.number(),
+      hoursSinceSync: v.number(),
+      currentJobs: v.array(v.object({
+        status: v.string(),
+        startedAt: v.optional(v.number()),
+        error: v.optional(v.string()),
+      })),
+    })
+  ),
+  handler: async (ctx, args) => {
+    // Get sync state
+    const syncState = await ctx.db
+      .query('tvdbSyncState')
+      .withIndex('entity', (q) => 
+        q.eq('entityType', args.entityType).eq('entityId', args.entityId)
+      )
+      .first();
+
+    if (!syncState) {
+      return null;
+    }
+
+    // Get current sync jobs
+    const jobs = await ctx.db
+      .query('syncJobs')
+      .withIndex('entity', (q) => 
+        q.eq('entityType', args.entityType)
+         .eq('entityId', args.entityId)
+         .eq('status', 'running')
+      )
+      .collect();
+
+    const pendingJobs = await ctx.db
+      .query('syncJobs')
+      .withIndex('entity', (q) => 
+        q.eq('entityType', args.entityType)
+         .eq('entityId', args.entityId)
+         .eq('status', 'pending')
+      )
+      .collect();
+
+    return {
+      lastSyncedAt: syncState.lastSyncedAt,
+      tvdbLastUpdated: syncState.tvdbLastUpdated,
+      syncVersion: syncState.syncVersion,
+      hoursSinceSync: (Date.now() - syncState.lastSyncedAt) / (1000 * 60 * 60),
+      currentJobs: [...jobs, ...pendingJobs].map(job => ({
+        status: job.status,
+        startedAt: job.startedAt,
+        error: job.error,
+      })),
     };
   },
 });
