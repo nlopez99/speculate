@@ -8,7 +8,6 @@ import type {
   EpisodeExtendedRecord,
   SeasonTypeEnum,
 } from '../client/api';
-import { RegisteredAction } from 'convex/server';
 
 // ============================================================================
 // New Optimized Sync Actions
@@ -219,18 +218,88 @@ export const syncSeriesDeep = internalAction({
         }
       }
 
-      // 4. Bulk upsert everything in a single mutation
-      console.log(`[SyncDeep] Bulk upserting series, ${seasonsData.length} seasons, and episodes`);
+      // 4. Upsert data in chunks to avoid timeouts
+      console.log(`[SyncDeep] Upserting series, ${seasonsData.length} seasons, and episodes`);
 
-      const result = await ctx.runMutation(
-        internal.tvdb.syncer.internalMutations.bulkUpsertSeriesBundle,
+      // 4a. First upsert the series
+      const seriesResult = await ctx.runMutation(
+        internal.tvdb.syncer.internalMutations.upsertSeriesData,
+        { series: seriesData }
+      );
+
+      // 4b. Then upsert all seasons
+      const seasonsResult = await ctx.runMutation(
+        internal.tvdb.syncer.internalMutations.upsertSeasonsData,
         {
-          series: seriesData,
+          showId: seriesResult.seriesId,
           seasons: seasonsData,
-          episodesBySeason,
-          syncTTLHours,
         }
       );
+
+      // 4c. Upsert episodes for each season in chunks
+      const stats = {
+        episodes: 0,
+        created: {
+          series: seriesResult.created,
+          seasons: seasonsResult.created,
+          episodes: 0,
+        },
+        updated: {
+          series: seriesResult.updated,
+          seasons: seasonsResult.updated,
+          episodes: 0,
+        },
+      };
+
+      // Create a mapping of season TVDB IDs to season Convex IDs
+      const seasonIdMap = new Map(
+        seasonsResult.seasonIdMapping.map((mapping) => [mapping.tvdbId, mapping.convexId])
+      );
+
+      // Process episodes season by season to avoid overwhelming a single mutation
+      const EPISODES_PER_BATCH = 50; // Process 50 episodes at a time
+
+      for (const [seasonTvdbId, episodes] of Object.entries(episodesBySeason)) {
+        const seasonId = seasonIdMap.get(seasonTvdbId);
+        if (!seasonId) {
+          console.warn(`[SyncDeep] No season ID found for TVDB season ${seasonTvdbId}`);
+          continue;
+        }
+
+        const season = seasonsData.find((s) => s.id?.toString() === seasonTvdbId);
+        const seasonNumber = season?.number || 0;
+
+        // Process episodes in batches
+        for (let i = 0; i < episodes.length; i += EPISODES_PER_BATCH) {
+          const batch = episodes.slice(i, i + EPISODES_PER_BATCH);
+          
+          console.log(
+            `[SyncDeep] Upserting ${batch.length} episodes for season ${seasonNumber} ` +
+            `(batch ${Math.floor(i / EPISODES_PER_BATCH) + 1}/${Math.ceil(episodes.length / EPISODES_PER_BATCH)})`
+          );
+
+          const episodeResult = await ctx.runMutation(
+            internal.tvdb.syncer.internalMutations.upsertSeasonEpisodes,
+            {
+              showId: seriesResult.seriesId,
+              seasonId,
+              seasonNumber,
+              seasonTvdbId,
+              episodes: batch,
+            }
+          );
+
+          stats.episodes += episodeResult.episodeCount;
+          stats.created.episodes += episodeResult.created;
+          stats.updated.episodes += episodeResult.updated;
+        }
+      }
+
+      // 4d. Update sync state
+      await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSeriesSyncState, {
+        seriesId: seriesIdStr,
+        lastUpdated: seriesData.lastUpdated,
+      });
 
       // Update sync job as completed
       await ctx.runMutation(internal.tvdb.syncer.internalMutations.updateSyncJob, {
@@ -240,10 +309,10 @@ export const syncSeriesDeep = internalAction({
         completedAt: Date.now(),
         metadata: {
           stats: {
-            seasons: result.seasonIds.length,
-            episodes: result.episodeCount,
-            created: result.created,
-            updated: result.updated,
+            seasons: seasonsResult.seasonIds.length,
+            episodes: stats.episodes,
+            created: stats.created,
+            updated: stats.updated,
             apiCalls,
             duration: Date.now() - startTime,
           },
@@ -253,17 +322,17 @@ export const syncSeriesDeep = internalAction({
       const duration = Date.now() - startTime;
       console.log(
         `[SyncDeep] Completed series ${seriesIdStr} in ${duration}ms: ` +
-          `${result.seasonIds.length} seasons, ${result.episodeCount} episodes, ` +
+          `${seasonsResult.seasonIds.length} seasons, ${stats.episodes} episodes, ` +
           `${apiCalls} API calls`
       );
 
       return {
         success: true,
         stats: {
-          seasons: result.seasonIds.length,
-          episodes: result.episodeCount,
-          created: result.created,
-          updated: result.updated,
+          seasons: seasonsResult.seasonIds.length,
+          episodes: stats.episodes,
+          created: stats.created,
+          updated: stats.updated,
           apiCalls,
           duration,
         },
