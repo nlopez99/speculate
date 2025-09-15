@@ -3,6 +3,7 @@
 import { internalAction } from "../../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../../_generated/api";
+import { Id } from "../../_generated/dataModel";
 import { canonicalizeJson, computeContentHash, compressData, getCompressionStats } from "./compression";
 
 /**
@@ -20,13 +21,18 @@ export const storeCompressedBlob = internalAction({
     isNew: v.boolean(),
     compressionRatio: v.optional(v.number()),
   }),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{
+    storageId: Id<"_storage">;
+    contentHash: string;
+    isNew: boolean;
+    compressionRatio?: number;
+  }> => {
     const canonical = canonicalizeJson(args.payload);
     const contentHash = computeContentHash(canonical);
 
     // Check if we already have this exact content for this specific entity
     // This ensures idempotency per (type, id, hash)
-    const existingWithSameHash: { _id: any; storageId: any } | null = await ctx.runQuery(
+    const existingWithSameHash: { _id: Id<"tvdbRawBlobIndex">; storageId: Id<"_storage"> } | null = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeIdAndHash,
       {
         tvdbType: args.tvdbType,
