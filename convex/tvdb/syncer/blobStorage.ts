@@ -1,10 +1,15 @@
-"use node";
+'use node';
 
-import { internalAction } from "../../_generated/server";
-import { v } from "convex/values";
-import { internal } from "../../_generated/api";
-import { Id } from "../../_generated/dataModel";
-import { canonicalizeJson, computeContentHash, compressData, getCompressionStats } from "./compression";
+import { internalAction } from '../../_generated/server';
+import { v } from 'convex/values';
+import { internal } from '../../_generated/api';
+import { Id } from '../../_generated/dataModel';
+import {
+  canonicalizeJson,
+  computeContentHash,
+  compressData,
+  getCompressionStats,
+} from './compression';
 
 /**
  * Store compressed TVDB data blob in Convex Storage
@@ -16,13 +21,16 @@ export const storeCompressedBlob = internalAction({
     payload: v.any(),
   },
   returns: v.object({
-    storageId: v.id("_storage"),
+    storageId: v.id('_storage'),
     contentHash: v.string(),
     isNew: v.boolean(),
     compressionRatio: v.optional(v.number()),
   }),
-  handler: async (ctx, args): Promise<{
-    storageId: Id<"_storage">;
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
+    storageId: Id<'_storage'>;
     contentHash: string;
     isNew: boolean;
     compressionRatio?: number;
@@ -32,14 +40,12 @@ export const storeCompressedBlob = internalAction({
 
     // Check if we already have this exact content for this specific entity
     // This ensures idempotency per (type, id, hash)
-    const existingWithSameHash: { _id: Id<"tvdbRawBlobIndex">; storageId: Id<"_storage"> } | null = await ctx.runQuery(
-      internal.tvdb.syncer.blobStorageQueries.findBlobByTypeIdAndHash,
-      {
+    const existingWithSameHash: { _id: Id<'tvdbRawBlobIndex'>; storageId: Id<'_storage'> } | null =
+      await ctx.runQuery(internal.tvdb.syncer.blobStorageQueries.findBlobByTypeIdAndHash, {
         tvdbType: args.tvdbType,
         tvdbId: args.tvdbId,
         contentHash,
-      }
-    );
+      });
 
     if (existingWithSameHash) {
       return {
@@ -54,7 +60,7 @@ export const storeCompressedBlob = internalAction({
     const stats = getCompressionStats(canonical, compressed);
 
     // Store in Convex Storage
-    const blob = new Blob([compressed]);
+    const blob = new globalThis.Blob([compressed]);
     const storageId = await ctx.storage.store(blob);
 
     // Record in index
@@ -70,7 +76,7 @@ export const storeCompressedBlob = internalAction({
     const compressionRatio = (stats.originalSize / stats.compressedSize).toFixed(2);
     console.log(
       `[BlobStorage] Stored ${args.tvdbType}/${args.tvdbId} - ` +
-      `Brotli ratio ~${compressionRatio}x (${stats.compressedSize}B compressed from ${stats.originalSize}B)`
+        `Brotli ratio ~${compressionRatio}x (${stats.compressedSize}B compressed from ${stats.originalSize}B)`
     );
 
     return {
@@ -87,7 +93,7 @@ export const storeCompressedBlob = internalAction({
  */
 export const getDecompressedBlob = internalAction({
   args: {
-    storageId: v.id("_storage"),
+    storageId: v.id('_storage'),
   },
   returns: v.any(),
   handler: async (ctx, args) => {

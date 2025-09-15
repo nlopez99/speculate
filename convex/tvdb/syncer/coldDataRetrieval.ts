@@ -3,6 +3,7 @@
 import { internalAction } from "../../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../../_generated/api";
+import { Id } from "../../_generated/dataModel";
 
 /**
  * Retrieve complete series data from cold storage
@@ -14,7 +15,13 @@ export const getFullSeriesData = internalAction({
   returns: v.any(),
   handler: async (ctx, args) => {
     // Find the blob index entry
-    const blobIndex: any = await ctx.runQuery(
+    const blobIndex: {
+      _id: Id<"tvdbRawBlobIndex">;
+      storageId: Id<"_storage">;
+      contentHash: string;
+      byteSize: number;
+      uncompressedSize?: number;
+    } | null = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'series',
@@ -48,7 +55,13 @@ export const getFullSeasonData = internalAction({
   returns: v.any(),
   handler: async (ctx, args) => {
     // Find the blob index entry
-    const blobIndex: any = await ctx.runQuery(
+    const blobIndex: {
+      _id: Id<"tvdbRawBlobIndex">;
+      storageId: Id<"_storage">;
+      contentHash: string;
+      byteSize: number;
+      uncompressedSize?: number;
+    } | null = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'season',
@@ -82,7 +95,13 @@ export const getFullEpisodeData = internalAction({
   returns: v.any(),
   handler: async (ctx, args) => {
     // Find the episode pack blob for this season
-    const blobIndex: any = await ctx.runQuery(
+    const blobIndex: {
+      _id: Id<"tvdbRawBlobIndex">;
+      storageId: Id<"_storage">;
+      contentHash: string;
+      byteSize: number;
+      uncompressedSize?: number;
+    } | null = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'episode_pack',
