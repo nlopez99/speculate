@@ -188,3 +188,24 @@ export const getStorageStats = internalQuery({
     };
   },
 });
+
+/**
+ * Check if cold data exists for an entity
+ */
+export const hasColdData = internalQuery({
+  args: {
+    tvdbType: v.union(v.literal('series'), v.literal('season'), v.literal('episode_pack')),
+    tvdbId: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const blobIndex = await ctx.db
+      .query('tvdbRawBlobIndex')
+      .withIndex('type_id', q =>
+        q.eq('tvdbType', args.tvdbType).eq('tvdbId', args.tvdbId)
+      )
+      .first();
+
+    return blobIndex !== null;
+  },
+});

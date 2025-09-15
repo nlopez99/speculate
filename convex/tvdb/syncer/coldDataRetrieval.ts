@@ -1,6 +1,6 @@
 "use node";
 
-import { internalAction, internalQuery } from "../../_generated/server";
+import { internalAction } from "../../_generated/server";
 import { v } from "convex/values";
 import { internal } from "../../_generated/api";
 
@@ -130,26 +130,5 @@ export const getFullEpisodeById = internalAction({
     );
 
     return episode || null;
-  },
-});
-
-/**
- * Check if cold data exists for an entity
- */
-export const hasColdData = internalQuery({
-  args: {
-    tvdbType: v.union(v.literal('series'), v.literal('season'), v.literal('episode_pack')),
-    tvdbId: v.string(),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    const blobIndex = await ctx.db
-      .query('tvdbRawBlobIndex')
-      .withIndex('type_id', q =>
-        q.eq('tvdbType', args.tvdbType).eq('tvdbId', args.tvdbId)
-      )
-      .first();
-
-    return blobIndex !== null;
   },
 });
