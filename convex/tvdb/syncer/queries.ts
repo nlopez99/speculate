@@ -199,6 +199,36 @@ export const getMappingByConvexId = query({
   },
 });
 
+// Helper query to count entities
+export const getEntityCount = internalQuery({
+  args: {
+    table: v.union(v.literal('shows'), v.literal('seasons'), v.literal('episodes')),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    // Use pagination to count without loading all records into memory
+    let count = 0;
+    let cursor = null;
+    const pageSize = 1000; // Count in chunks
+
+    while (true) {
+      const page = await ctx.db
+        .query(args.table)
+        .paginate({ numItems: pageSize, cursor });
+
+      count += page.page.length;
+
+      if (page.isDone) {
+        break;
+      }
+
+      cursor = page.continueCursor;
+    }
+
+    return count;
+  },
+});
+
 // ============================================================================
 // Sync Progress Queries
 // ============================================================================

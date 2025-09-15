@@ -781,4 +781,36 @@ export default defineSchema({
   syncJobs: defineTable(syncJobsValidator)
     .index('entity', ['entityType', 'entityId', 'status'])
     .index('status', ['status']),
+
+  // Cold storage for complete TVDB data
+  tvdbRawBlobIndex: defineTable({
+    // What this blob represents
+    tvdbType: v.union(
+      v.literal("series"),
+      v.literal("season"),
+      v.literal("episode_pack")
+    ),
+    // The TVDB id the blob belongs to (for episode_pack this is the seasonId)
+    tvdbId: v.string(),
+
+    // Where the compressed payload lives in Convex Storage
+    storageId: v.id("_storage"),
+
+    // Dedup / change detection
+    contentHash: v.string(),   // sha256 of canonical JSON (pre-compression)
+    encoding: v.literal("br"), // brotli
+
+    // Sizes (for ops/monitoring)
+    byteSize: v.number(),              // compressed size (bytes)
+    uncompressedSize: v.optional(v.number()),
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    // Fast lookup by (type,id) — used by queries.getRawBlobIndex
+    .index("type_id", ["tvdbType", "tvdbId"])
+    // Optional but useful: dedupe by contentHash and reverse lookup by storageId
+    .index("contentHash", ["contentHash"])
+    .index("storageId", ["storageId"]),
 });

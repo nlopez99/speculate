@@ -8,6 +8,8 @@ import type {
   EpisodeExtendedRecord,
   SeasonTypeEnum,
 } from '../client/api';
+import { createEpisodePack } from './fieldExtraction';
+import { Id } from '../../_generated/dataModel';
 
 // ============================================================================
 // New Optimized Sync Actions
@@ -218,23 +220,124 @@ export const syncSeriesDeep = internalAction({
         }
       }
 
-      // 4. Upsert data in chunks to avoid timeouts
-      console.log(`[SyncDeep] Upserting series, ${seasonsData.length} seasons, and episodes`);
-
-      // 4a. First upsert the series
-      const seriesResult = await ctx.runMutation(
-        internal.tvdb.syncer.internalMutations.upsertSeriesData,
-        { series: seriesData }
+      // 4. Store cold data in blobs and upsert hot data
+      console.log(
+        `[SyncDeep] Storing cold data and upserting hot data for series, ${seasonsData.length} seasons, and episodes`
       );
 
-      // 4b. Then upsert all seasons
-      const seasonsResult = await ctx.runMutation(
-        internal.tvdb.syncer.internalMutations.upsertSeasonsData,
-        {
-          showId: seriesResult.seriesId,
-          seasons: seasonsData,
+      // 4a. Store complete series data as cold blob
+      const seriesBlob = await ctx.runAction(internal.tvdb.syncer.blobStorage.storeCompressedBlob, {
+        tvdbType: 'series' as const,
+        tvdbId: String(seriesIdStr),
+        payload: seriesData,
+      });
+
+      // 4a2. Upsert hot series data only if changed
+      let seriesResult;
+      if (seriesBlob.isNew) {
+        seriesResult = await ctx.runMutation(
+          internal.tvdb.syncer.internalMutations.upsertSeriesData,
+          { series: seriesData }
+        );
+      } else {
+        // Get existing series ID without updating
+        const existingMapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
+          tvdbId: String(seriesIdStr),
+          tvdbType: 'series',
+        });
+
+        if (existingMapping?.convexId) {
+          seriesResult = {
+            seriesId: existingMapping.convexId as Id<'shows'>,
+            created: false,
+            updated: false,
+          };
+        } else {
+          // Mapping missing - create it now
+          console.log(`[SyncDeep] Series mapping missing for ${seriesIdStr}, creating hot data`);
+          seriesResult = await ctx.runMutation(
+            internal.tvdb.syncer.internalMutations.upsertSeriesData,
+            { series: seriesData }
+          );
         }
-      );
+      }
+
+      // 4b. Store season blobs and upsert hot season data
+      const seasonBlobPromises = seasonsData.map(async (season) => {
+        if (!season.id) return null;
+
+        const seasonBlob = await ctx.runAction(
+          internal.tvdb.syncer.blobStorage.storeCompressedBlob,
+          {
+            tvdbType: 'season' as const,
+            tvdbId: String(season.id),
+            payload: season,
+          }
+        );
+
+        return { season, blob: seasonBlob };
+      });
+
+      const seasonBlobs = await Promise.all(seasonBlobPromises);
+
+      // Only update seasons that have changed
+      const changedSeasons = seasonBlobs
+        .filter((result) => result?.blob.isNew)
+        .map((result) => result!.season);
+
+      // We need to track ALL season mappings (both changed and unchanged)
+      let allSeasonMappings: { tvdbId: string; convexId: Id<'seasons'> }[] = [];
+
+      if (changedSeasons.length > 0) {
+        const changedResult = await ctx.runMutation(
+          internal.tvdb.syncer.internalMutations.upsertSeasonsData,
+          {
+            showId: seriesResult.seriesId as Id<'shows'>,
+            seasons: changedSeasons,
+          }
+        );
+        allSeasonMappings.push(...changedResult.seasonIdMapping);
+      }
+
+      // Get mappings for unchanged seasons
+      const unchangedSeasons = seasonBlobs
+        .filter((result) => result && !result.blob.isNew)
+        .map((result) => result!.season);
+
+      for (const unchangedSeason of unchangedSeasons) {
+        if (!unchangedSeason?.id) continue;
+
+        const mapping = await ctx.runQuery(internal.tvdb.syncer.queries.getMapping, {
+          tvdbId: String(unchangedSeason.id),
+          tvdbType: 'season',
+        });
+
+        if (mapping?.convexId) {
+          allSeasonMappings.push({
+            tvdbId: String(unchangedSeason.id),
+            convexId: mapping.convexId as Id<'seasons'>
+          });
+        } else {
+          // Mapping missing - create the season
+          console.log(`[SyncDeep] Season mapping missing for ${unchangedSeason.id}, creating hot data`);
+          const singleSeasonResult = await ctx.runMutation(
+            internal.tvdb.syncer.internalMutations.upsertSeasonsData,
+            {
+              showId: seriesResult.seriesId as Id<'shows'>,
+              seasons: [unchangedSeason],
+            }
+          );
+          allSeasonMappings.push(...singleSeasonResult.seasonIdMapping);
+        }
+      }
+
+      // Construct final seasonsResult with all mappings
+      const seasonsResult = {
+        seasonIds: allSeasonMappings.map((m) => m.convexId),
+        seasonIdMapping: allSeasonMappings,
+        created: changedSeasons.length,
+        updated: 0,
+      };
 
       // 4c. Upsert episodes for each season in chunks
       const stats = {
@@ -256,8 +359,8 @@ export const syncSeriesDeep = internalAction({
         seasonsResult.seasonIdMapping.map((mapping) => [mapping.tvdbId, mapping.convexId])
       );
 
-      // Process episodes season by season to avoid overwhelming a single mutation
-      const EPISODES_PER_BATCH = 50; // Process 50 episodes at a time
+      // Process episodes season by season with episode packs for cold storage
+      const EPISODES_PER_BATCH = 50; // Process 50 episodes at a time for hot data
 
       for (const [seasonTvdbId, episodes] of Object.entries(episodesBySeason)) {
         const seasonId = seasonIdMap.get(seasonTvdbId);
@@ -269,29 +372,56 @@ export const syncSeriesDeep = internalAction({
         const season = seasonsData.find((s) => s.id?.toString() === seasonTvdbId);
         const seasonNumber = season?.number || 0;
 
-        // Process episodes in batches
-        for (let i = 0; i < episodes.length; i += EPISODES_PER_BATCH) {
-          const batch = episodes.slice(i, i + EPISODES_PER_BATCH);
-          
+        // Store episode pack as cold blob
+        const episodePack = createEpisodePack(
+          parseInt(seriesIdStr),
+          parseInt(seasonTvdbId),
+          seasonNumber,
+          episodes
+        );
+
+        const episodePackBlob = await ctx.runAction(
+          internal.tvdb.syncer.blobStorage.storeCompressedBlob,
+          {
+            tvdbType: 'episode_pack' as const,
+            tvdbId: seasonTvdbId, // Use season ID for episode packs
+            payload: episodePack,
+          }
+        );
+
+        // Only update hot episode data if the pack has changed
+        if (episodePackBlob.isNew) {
+          // Process episodes in batches for hot data
+          for (let i = 0; i < episodes.length; i += EPISODES_PER_BATCH) {
+            const batch = episodes.slice(i, i + EPISODES_PER_BATCH);
+
+            console.log(
+              `[SyncDeep] Upserting ${batch.length} hot episodes for season ${seasonNumber} ` +
+                `(batch ${Math.floor(i / EPISODES_PER_BATCH) + 1}/${Math.ceil(episodes.length / EPISODES_PER_BATCH)})`
+            );
+
+            const episodeResult = await ctx.runMutation(
+              internal.tvdb.syncer.internalMutations.upsertSeasonEpisodes,
+              {
+                showId: seriesResult.seriesId as Id<'shows'>,
+                seasonId: seasonId as Id<'seasons'>,
+                seasonNumber,
+                seasonTvdbId,
+                episodes: batch,
+              }
+            );
+
+            stats.episodes += episodeResult.episodeCount;
+            stats.created.episodes += episodeResult.created;
+            stats.updated.episodes += episodeResult.updated;
+          }
+        } else {
           console.log(
-            `[SyncDeep] Upserting ${batch.length} episodes for season ${seasonNumber} ` +
-            `(batch ${Math.floor(i / EPISODES_PER_BATCH) + 1}/${Math.ceil(episodes.length / EPISODES_PER_BATCH)})`
+            `[SyncDeep] Skipping hot episode updates for season ${seasonNumber} - no changes detected. ` +
+            `Counted ${episodes.length} episodes (no creates/updates)`
           );
-
-          const episodeResult = await ctx.runMutation(
-            internal.tvdb.syncer.internalMutations.upsertSeasonEpisodes,
-            {
-              showId: seriesResult.seriesId,
-              seasonId,
-              seasonNumber,
-              seasonTvdbId,
-              episodes: batch,
-            }
-          );
-
-          stats.episodes += episodeResult.episodeCount;
-          stats.created.episodes += episodeResult.created;
-          stats.updated.episodes += episodeResult.updated;
+          stats.episodes += episodes.length;
+          // Note: stats.created.episodes and stats.updated.episodes remain unchanged
         }
       }
 
