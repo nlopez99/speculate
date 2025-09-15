@@ -14,7 +14,7 @@ export const getFullSeriesData = internalAction({
   returns: v.any(),
   handler: async (ctx, args) => {
     // Find the blob index entry
-    const blobIndex = await ctx.runQuery(
+    const blobIndex: any = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'series',
@@ -27,7 +27,7 @@ export const getFullSeriesData = internalAction({
     }
 
     // Retrieve and decompress the blob
-    const fullData = await ctx.runAction(
+    const fullData: any = await ctx.runAction(
       internal.tvdb.syncer.blobStorage.getDecompressedBlob,
       {
         storageId: blobIndex.storageId,
@@ -48,7 +48,7 @@ export const getFullSeasonData = internalAction({
   returns: v.any(),
   handler: async (ctx, args) => {
     // Find the blob index entry
-    const blobIndex = await ctx.runQuery(
+    const blobIndex: any = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'season',
@@ -61,7 +61,7 @@ export const getFullSeasonData = internalAction({
     }
 
     // Retrieve and decompress the blob
-    const fullData = await ctx.runAction(
+    const fullData: any = await ctx.runAction(
       internal.tvdb.syncer.blobStorage.getDecompressedBlob,
       {
         storageId: blobIndex.storageId,
@@ -82,7 +82,7 @@ export const getFullEpisodeData = internalAction({
   returns: v.any(),
   handler: async (ctx, args) => {
     // Find the episode pack blob for this season
-    const blobIndex = await ctx.runQuery(
+    const blobIndex: any = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'episode_pack',
@@ -95,7 +95,7 @@ export const getFullEpisodeData = internalAction({
     }
 
     // Retrieve and decompress the blob
-    const episodePack = await ctx.runAction(
+    const episodePack: any = await ctx.runAction(
       internal.tvdb.syncer.blobStorage.getDecompressedBlob,
       {
         storageId: blobIndex.storageId,
@@ -117,7 +117,7 @@ export const getFullEpisodeById = internalAction({
   returns: v.union(v.null(), v.any()),
   handler: async (ctx, args) => {
     // Get all episodes for the season
-    const episodes = await ctx.runAction(
+    const episodes: any = await ctx.runAction(
       internal.tvdb.syncer.coldDataRetrieval.getFullEpisodeData,
       {
         seasonTvdbId: args.seasonTvdbId,
@@ -125,7 +125,7 @@ export const getFullEpisodeById = internalAction({
     );
 
     // Find the specific episode
-    const episode = episodes.find(
+    const episode: any = episodes.find(
       (ep: any) => String(ep.id) === args.episodeTvdbId
     );
 

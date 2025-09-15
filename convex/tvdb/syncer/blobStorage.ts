@@ -26,7 +26,7 @@ export const storeCompressedBlob = internalAction({
 
     // Check if we already have this exact content for this specific entity
     // This ensures idempotency per (type, id, hash)
-    const existingWithSameHash = await ctx.runQuery(
+    const existingWithSameHash: { _id: any; storageId: any } | null = await ctx.runQuery(
       internal.tvdb.syncer.blobStorageQueries.findBlobByTypeIdAndHash,
       {
         tvdbType: args.tvdbType,
