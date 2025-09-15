@@ -807,10 +807,20 @@ export default defineSchema({
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),
+
+    // Optional metadata for evolution
+    schemaVersion: v.optional(v.number()),
+    tvdbLastUpdated: v.optional(v.number()),
   })
     // Fast lookup by (type,id) — used by queries.getRawBlobIndex
     .index("type_id", ["tvdbType", "tvdbId"])
-    // Optional but useful: dedupe by contentHash and reverse lookup by storageId
+    // Get latest version for a (type,id)
+    .index("type_id_updatedAt", ["tvdbType", "tvdbId", "updatedAt"])
+    // Idempotency: check if exact content already exists for this entity
+    .index("type_id_hash", ["tvdbType", "tvdbId", "contentHash"])
+    // Dedupe by contentHash and reverse lookup by storageId
     .index("contentHash", ["contentHash"])
-    .index("storageId", ["storageId"]),
+    .index("storageId", ["storageId"])
+    // For time-based cleanup/retention
+    .index("createdAt", ["createdAt"]),
 });

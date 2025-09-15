@@ -5,6 +5,7 @@ import { brotliCompressSync, brotliDecompressSync, constants } from 'zlib';
 
 /**
  * Canonicalize JSON by sorting keys recursively for consistent hashing
+ * Also sorts arrays by their natural order to prevent jitter
  */
 export const canonicalizeJson = (obj: any): string => {
   // Recursive key sorter to ensure stable serialization
@@ -12,15 +13,33 @@ export const canonicalizeJson = (obj: any): string => {
     if (value === null || typeof value !== 'object') {
       return value;
     }
+
     if (Array.isArray(value)) {
-      return value.map(sortKeys);
+      // Sort arrays for stable hashing (especially episodes)
+      const mapped = value.map(sortKeys);
+
+      // Try to sort by common fields if they exist
+      if (mapped.length > 0 && mapped[0] && typeof mapped[0] === 'object') {
+        if ('episodeNumber' in mapped[0] || 'number' in mapped[0]) {
+          // Sort episodes by number
+          return mapped.sort((a, b) => (a.episodeNumber || a.number || 0) - (b.episodeNumber || b.number || 0));
+        } else if ('id' in mapped[0]) {
+          // Sort by ID if available
+          return mapped.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+        }
+      }
+      return mapped;
     }
-    return Object.keys(value)
+
+    // Sort object keys and recurse
+    const sorted: any = {};
+    Object.keys(value)
+      .filter(key => value[key] !== undefined) // Strip undefined fields
       .sort()
-      .reduce((sorted, key) => {
+      .forEach(key => {
         sorted[key] = sortKeys(value[key]);
-        return sorted;
-      }, {} as any);
+      });
+    return sorted;
   };
 
   const sorted = sortKeys(obj);

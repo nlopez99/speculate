@@ -24,16 +24,20 @@ export const storeCompressedBlob = internalAction({
     const canonical = canonicalizeJson(args.payload);
     const contentHash = computeContentHash(canonical);
 
-    // Check if we already have this exact content
-    const existing = await ctx.runQuery(internal.tvdb.syncer.blobStorage.findBlobByTypeAndId, {
-      tvdbType: args.tvdbType,
-      tvdbId: args.tvdbId,
-    });
+    // Check if we already have this exact content for this specific entity
+    // This ensures idempotency per (type, id, hash)
+    const existingWithSameHash = await ctx.runQuery(
+      internal.tvdb.syncer.blobStorage.findBlobByTypeIdAndHash,
+      {
+        tvdbType: args.tvdbType,
+        tvdbId: args.tvdbId,
+        contentHash,
+      }
+    );
 
-    // If content hasn't changed, return existing
-    if (existing?.contentHash === contentHash) {
+    if (existingWithSameHash) {
       return {
-        storageId: existing.storageId,
+        storageId: existingWithSameHash.storageId,
         contentHash,
         isNew: false,
       };
@@ -95,6 +99,34 @@ export const findBlobByTypeAndId = internalQuery({
       .query('tvdbRawBlobIndex')
       .withIndex('type_id', q =>
         q.eq('tvdbType', args.tvdbType).eq('tvdbId', args.tvdbId)
+      )
+      .first();
+  },
+});
+
+/**
+ * Find blob by type, ID, and hash (for idempotency)
+ */
+export const findBlobByTypeIdAndHash = internalQuery({
+  args: {
+    tvdbType: v.union(v.literal('series'), v.literal('season'), v.literal('episode_pack')),
+    tvdbId: v.string(),
+    contentHash: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      _id: v.id("tvdbRawBlobIndex"),
+      storageId: v.id("_storage"),
+    })
+  ),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('tvdbRawBlobIndex')
+      .withIndex('type_id_hash', q =>
+        q.eq('tvdbType', args.tvdbType)
+          .eq('tvdbId', args.tvdbId)
+          .eq('contentHash', args.contentHash)
       )
       .first();
   },

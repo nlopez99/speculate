@@ -99,13 +99,31 @@ export const syncSeriesDeep = internalAction({
         }
       }
 
-      // Create or update sync job
-      await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSyncJob, {
+      // Try to claim the sync job
+      const jobResult = await ctx.runMutation(internal.tvdb.syncer.internalMutations.upsertSyncJob, {
         entityType: 'series',
         entityId: seriesIdStr,
         status: 'running',
         startedAt: Date.now(),
       });
+
+      if (!jobResult.claimed && !args.options?.force) {
+        console.log(
+          `[SyncDeep] Another sync job is already running for series ${seriesIdStr}`
+        );
+        return {
+          success: false,
+          stats: {
+            seasons: 0,
+            episodes: 0,
+            created: { series: false, seasons: 0, episodes: 0 },
+            updated: { series: false, seasons: 0, episodes: 0 },
+            apiCalls: 0,
+            duration: Date.now() - startTime,
+          },
+          error: 'Another sync job is already running for this series',
+        };
+      }
 
       // Get authenticated client
       const client = await getAuthenticatedClient(ctx);
@@ -287,6 +305,8 @@ export const syncSeriesDeep = internalAction({
 
       // We need to track ALL season mappings (both changed and unchanged)
       let allSeasonMappings: { tvdbId: string; convexId: Id<'seasons'> }[] = [];
+      let createdCount = 0;
+      let updatedCount = 0;
 
       if (changedSeasons.length > 0) {
         const changedResult = await ctx.runMutation(
@@ -297,6 +317,8 @@ export const syncSeriesDeep = internalAction({
           }
         );
         allSeasonMappings.push(...changedResult.seasonIdMapping);
+        createdCount += changedResult.created;
+        updatedCount += changedResult.updated;
       }
 
       // Get mappings for unchanged seasons
@@ -328,15 +350,17 @@ export const syncSeriesDeep = internalAction({
             }
           );
           allSeasonMappings.push(...singleSeasonResult.seasonIdMapping);
+          createdCount += singleSeasonResult.created;
+          updatedCount += singleSeasonResult.updated;
         }
       }
 
-      // Construct final seasonsResult with all mappings
+      // Construct final seasonsResult with accurate counts
       const seasonsResult = {
         seasonIds: allSeasonMappings.map((m) => m.convexId),
         seasonIdMapping: allSeasonMappings,
-        created: changedSeasons.length,
-        updated: 0,
+        created: createdCount,
+        updated: updatedCount,
       };
 
       // 4c. Upsert episodes for each season in chunks

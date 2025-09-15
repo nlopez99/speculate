@@ -1160,8 +1160,12 @@ export const upsertSyncJob = internalMutation({
     startedAt: v.optional(v.number()),
     priority: v.optional(v.number()),
   },
-  returns: v.null(),
+  returns: v.object({
+    claimed: v.boolean(),
+    existingJobId: v.optional(v.id('syncJobs')),
+  }),
   handler: async (ctx, args) => {
+    // Check if there's already a running job for this entity
     const existing = await ctx.db
       .query('syncJobs')
       .withIndex('entity', (q) =>
@@ -1170,12 +1174,21 @@ export const upsertSyncJob = internalMutation({
       .first();
 
     if (existing) {
+      // Another job is already running for this entity
+      if (args.status === 'running') {
+        // Can't claim - another job is already running
+        return { claimed: false, existingJobId: existing._id };
+      }
+
+      // Update the existing job
       await ctx.db.patch(existing._id, {
         status: args.status,
         startedAt: args.startedAt,
       });
+      return { claimed: true, existingJobId: existing._id };
     } else {
-      await ctx.db.insert('syncJobs', {
+      // No existing running job - create a new one
+      const jobId = await ctx.db.insert('syncJobs', {
         entityType: args.entityType,
         entityId: args.entityId,
         status: args.status,
@@ -1183,8 +1196,8 @@ export const upsertSyncJob = internalMutation({
         startedAt: args.startedAt,
         retryCount: 0,
       });
+      return { claimed: true, existingJobId: jobId };
     }
-    return null;
   },
 });
 

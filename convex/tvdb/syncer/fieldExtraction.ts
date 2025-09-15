@@ -116,12 +116,19 @@ export const createEpisodePack = (
   seasonNumber: number,
   episodes: EpisodeExtendedRecord[]
 ) => {
+  // Sort episodes by episode number for stable packing
+  const sortedEpisodes = [...episodes].sort((a, b) => {
+    const numA = a.number || 0;
+    const numB = b.number || 0;
+    return numA - numB;
+  });
+
   return {
     seriesId,
     seasonId,
     seasonNumber,
-    episodeCount: episodes.length,
-    episodes: episodes.map(ep => ({
+    episodeCount: sortedEpisodes.length,
+    episodes: sortedEpisodes.map(ep => ({
       ...ep,
       // Ensure all episode data is included for cold storage
       _metadata: {
