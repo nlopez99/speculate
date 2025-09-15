@@ -24,6 +24,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "convex": "^1.26.1",
+    "crypto": "^1.0.1",
     "expo": "^53.0.22",
     "expo-linear-gradient": "^14.1.5",
     "expo-linking": "~7.1.7",
