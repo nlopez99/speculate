@@ -15,7 +15,7 @@ export const getFullSeriesData = internalAction({
   handler: async (ctx, args) => {
     // Find the blob index entry
     const blobIndex = await ctx.runQuery(
-      internal.tvdb.syncer.blobStorage.findBlobByTypeAndId,
+      internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'series',
         tvdbId: args.tvdbId,
@@ -49,7 +49,7 @@ export const getFullSeasonData = internalAction({
   handler: async (ctx, args) => {
     // Find the blob index entry
     const blobIndex = await ctx.runQuery(
-      internal.tvdb.syncer.blobStorage.findBlobByTypeAndId,
+      internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'season',
         tvdbId: args.tvdbId,
@@ -83,7 +83,7 @@ export const getFullEpisodeData = internalAction({
   handler: async (ctx, args) => {
     // Find the episode pack blob for this season
     const blobIndex = await ctx.runQuery(
-      internal.tvdb.syncer.blobStorage.findBlobByTypeAndId,
+      internal.tvdb.syncer.blobStorageQueries.findBlobByTypeAndId,
       {
         tvdbType: 'episode_pack',
         tvdbId: args.seasonTvdbId,

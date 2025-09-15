@@ -50,7 +50,7 @@ export const testBlobStorage = internalAction({
 
       // 2. Get storage statistics
       const storageStats = await ctx.runQuery(
-        internal.tvdb.syncer.blobStorage.getStorageStats,
+        internal.tvdb.syncer.blobStorageQueries.getStorageStats,
         {}
       );
 
