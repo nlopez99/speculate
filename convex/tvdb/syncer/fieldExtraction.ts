@@ -1,4 +1,8 @@
-import type { SeriesExtendedRecord, SeasonExtendedRecord, EpisodeExtendedRecord } from '../client/api';
+import type {
+  SeriesExtendedRecord,
+  SeasonExtendedRecord,
+  EpisodeExtendedRecord,
+} from '../client/api';
 
 /**
  * Extract only the essential queryable fields from full series data
@@ -53,7 +57,7 @@ export const extractHotEpisodeFields = (
   seasonId: string,
   seasonNumber: number
 ) => {
-  return episodes.map(ep => {
+  return episodes.map((ep) => {
     const airDate = ep.aired ? new Date(ep.aired) : undefined;
     const hasAired = airDate ? airDate < new Date() : false;
 
@@ -81,17 +85,11 @@ export const computeHotFieldsFingerprint = (data: any): string => {
   // Sort keys and stringify for consistent hashing
   const sortedData = JSON.stringify(data, Object.keys(data).sort());
 
-  // Simple hash using Node's crypto (if available) or fallback
-  if (typeof require !== 'undefined') {
-    const crypto = require('crypto');
-    return crypto.createHash('sha1').update(sortedData).digest('hex');
-  }
-
   // Fallback: simple string hash for browser environment
   let hash = 0;
   for (let i = 0; i < sortedData.length; i++) {
     const char = sortedData.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
+    hash = (hash << 5) - hash + char;
     hash = hash & hash; // Convert to 32bit integer
   }
   return hash.toString(16);
@@ -128,13 +126,13 @@ export const createEpisodePack = (
     seasonId,
     seasonNumber,
     episodeCount: sortedEpisodes.length,
-    episodes: sortedEpisodes.map(ep => ({
+    episodes: sortedEpisodes.map((ep) => ({
       ...ep,
       // Ensure all episode data is included for cold storage
       _metadata: {
         packedAt: Date.now(),
         sourceApi: 'tvdb-v4',
-      }
+      },
     })),
   };
 };
